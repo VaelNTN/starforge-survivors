@@ -211,8 +211,15 @@ export interface PlayerSave {
   freeGiftClaimedToday: boolean;
   adGemsUsedToday: number;
   adKeysUsedToday: number;
+  wheelSpinsFreeUsedToday: number;
+  wheelSpinsAdUsedToday: number;
+  pendingVipDailyGems: number;
   quests: QuestProgress;
   claimedAchievements: string[];
+  discoveredEvos: WeaponId[];
+  claimedEvoCodex: WeaponId[];
+  bestBossRushSec: number;
+  bossRushClears: number;
 
   lastPatrolCollectAt: number;
   lastInterstitialAt: number;
@@ -223,6 +230,12 @@ export interface PlayerSave {
   damageNumbersEnabled: boolean;
 
   leaderboard: LeaderboardEntry[];
+}
+
+export interface ActiveRunBoosters {
+  extraWeapon: boolean;
+  overdriveAtk: boolean;
+  doubleLuck: boolean;
 }
 
 export interface CombatStats {
@@ -255,5 +268,7 @@ export interface RunSummary {
   levelReached: number;
   newGearDrop: GearItem | null;
   evolutionsUnlocked: string[];
+  evoIdsUnlocked: WeaponId[];
+  maxCombo: number;
   doubledByAd: boolean;
 }

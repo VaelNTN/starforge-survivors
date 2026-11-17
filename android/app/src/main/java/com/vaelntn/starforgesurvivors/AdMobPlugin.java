@@ -26,6 +26,7 @@ public class AdMobPlugin extends Plugin {
 
     private RewardedAd rewardedAd = null;
     private InterstitialAd interstitialAd = null;
+    private boolean isLoadingRewarded = false;
 
     @PluginMethod
     public void initialize(PluginCall call) {
@@ -53,16 +54,19 @@ public class AdMobPlugin extends Plugin {
 
     private void preloadRewarded() {
         Activity activity = getActivity();
-        if (activity == null) return;
+        if (activity == null || isLoadingRewarded || rewardedAd != null) return;
+        isLoadingRewarded = true;
         AdRequest req = new AdRequest.Builder().build();
         RewardedAd.load(activity, rewardedUnitId, req, new RewardedAdLoadCallback() {
             @Override
             public void onAdLoaded(@NonNull RewardedAd ad) {
+                isLoadingRewarded = false;
                 rewardedAd = ad;
             }
 
             @Override
             public void onAdFailedToLoad(@NonNull LoadAdError err) {
+                isLoadingRewarded = false;
                 rewardedAd = null;
             }
         });
@@ -96,40 +100,62 @@ public class AdMobPlugin extends Plugin {
         }
 
         activity.runOnUiThread(() -> {
-            if (rewardedAd == null) {
-                preloadRewarded();
-                JSObject out = new JSObject();
-                out.put("rewarded", false);
-                out.put("error", "AD_NOT_READY");
-                call.resolve(out);
+            if (rewardedAd != null) {
+                RewardedAd ad = rewardedAd;
+                rewardedAd = null;
+                presentRewardedAd(activity, ad, call);
                 return;
             }
 
-            final boolean[] earned = { false };
-            RewardedAd ad = rewardedAd;
-            rewardedAd = null;
-
-            ad.setFullScreenContentCallback(new FullScreenContentCallback() {
+            // Load on demand so the user doesn't hit an immediate AD_NOT_READY
+            AdRequest req = new AdRequest.Builder().build();
+            RewardedAd.load(activity, rewardedUnitId, req, new RewardedAdLoadCallback() {
                 @Override
-                public void onAdDismissedFullScreenContent() {
-                    preloadRewarded();
+                public void onAdLoaded(@NonNull RewardedAd ad) {
+                    presentRewardedAd(activity, ad, call);
+                }
+
+                @Override
+                public void onAdFailedToLoad(@NonNull LoadAdError err) {
+                    JSObject out = new JSObject();
+                    out.put("rewarded", false);
+                    out.put("error", "AD_NOT_READY");
+                    call.resolve(out);
+                }
+            });
+        });
+    }
+
+    private void presentRewardedAd(Activity activity, RewardedAd ad, PluginCall call) {
+        final boolean[] earned = { false };
+        final boolean[] resolved = { false };
+
+        ad.setFullScreenContentCallback(new FullScreenContentCallback() {
+            @Override
+            public void onAdDismissedFullScreenContent() {
+                preloadRewarded();
+                if (!resolved[0]) {
+                    resolved[0] = true;
                     JSObject out = new JSObject();
                     out.put("rewarded", earned[0]);
                     call.resolve(out);
                 }
+            }
 
-                @Override
-                public void onAdFailedToShowFullScreenContent(@NonNull AdError adError) {
-                    preloadRewarded();
+            @Override
+            public void onAdFailedToShowFullScreenContent(@NonNull AdError adError) {
+                preloadRewarded();
+                if (!resolved[0]) {
+                    resolved[0] = true;
                     JSObject out = new JSObject();
                     out.put("rewarded", false);
                     out.put("error", adError.getMessage());
                     call.resolve(out);
                 }
-            });
-
-            ad.show(activity, rewardItem -> earned[0] = true);
+            }
         });
+
+        ad.show(activity, rewardItem -> earned[0] = true);
     }
 
     @PluginMethod

@@ -8,6 +8,8 @@ import {
   RARITY_META,
   RARITY_ORDER,
   TALENTS,
+  WHEEL_REWARDS,
+  WheelSliceDef,
 } from '../data/gameCatalog';
 import {
   CombatStats,
@@ -129,6 +131,9 @@ export function createDefaultSave(): PlayerSave {
     freeGiftClaimedToday: false,
     adGemsUsedToday: 0,
     adKeysUsedToday: 0,
+    wheelSpinsFreeUsedToday: 0,
+    wheelSpinsAdUsedToday: 0,
+    pendingVipDailyGems: 0,
     quests: {
       killsToday: 0,
       runsToday: 0,
@@ -138,6 +143,10 @@ export function createDefaultSave(): PlayerSave {
       claimedIds: [],
     },
     claimedAchievements: [],
+    discoveredEvos: [],
+    claimedEvoCodex: [],
+    bestBossRushSec: 0,
+    bossRushClears: 0,
 
     lastPatrolCollectAt: Date.now(),
     lastInterstitialAt: 0,
@@ -168,6 +177,8 @@ export function loadSave(): PlayerSave {
       equipped: { ...base.equipped, ...(parsed.equipped || {}) },
       talents: { ...(parsed.talents || {}) },
       quests: { ...base.quests, ...(parsed.quests || {}) },
+      discoveredEvos: Array.isArray(parsed.discoveredEvos) ? parsed.discoveredEvos : [],
+      claimedEvoCodex: Array.isArray(parsed.claimedEvoCodex) ? parsed.claimedEvoCodex : [],
       inventory: Array.isArray(parsed.inventory) && parsed.inventory.length > 0 ? parsed.inventory : base.inventory,
       leaderboard: Array.isArray(parsed.leaderboard) && parsed.leaderboard.length > 0 ? parsed.leaderboard : base.leaderboard,
     };
@@ -192,6 +203,8 @@ export function ensureDailyState(save: PlayerSave): PlayerSave {
     save.freeGiftClaimedToday = false;
     save.adGemsUsedToday = 0;
     save.adKeysUsedToday = 0;
+    save.wheelSpinsFreeUsedToday = 0;
+    save.wheelSpinsAdUsedToday = 0;
     save.quests = {
       killsToday: 0,
       runsToday: 0,
@@ -211,6 +224,7 @@ export function ensureDailyState(save: PlayerSave): PlayerSave {
     // VIP daily bonus auto-credit
     if (save.vipExpiresAt > Date.now()) {
       save.gems += 80;
+      save.pendingVipDailyGems = (save.pendingVipDailyGems || 0) + 80;
     }
   }
   return save;
@@ -421,6 +435,80 @@ export function autoMergeAllGear(save: PlayerSave): number {
   return merges;
 }
 
+export function getGearPower(item: GearItem): number {
+  const s = getGearStats(item);
+  return Math.round(s.atk * 3.1 + s.hp * 0.25);
+}
+
+export function getSalvageYield(item: GearItem): { coins: number; blueprints: number } {
+  const rIdx = Math.max(0, RARITY_ORDER.indexOf(item.rarity));
+  const mult = Math.pow(2.1, rIdx);
+  return {
+    coins: Math.round((160 + (item.level - 1) * 90) * mult),
+    blueprints: Math.max(1, Math.round((1 + Math.floor(item.level * 0.4)) * mult)),
+  };
+}
+
+export function salvageGearItem(save: PlayerSave, uid: string): { coins: number; blueprints: number } | null {
+  const isEquipped = Object.values(save.equipped).includes(uid);
+  if (isEquipped) return null;
+  const idx = save.inventory.findIndex((g) => g.uid === uid);
+  if (idx < 0) return null;
+  const item = save.inventory[idx];
+  const payout = getSalvageYield(item);
+  save.inventory.splice(idx, 1);
+  save.coins += payout.coins;
+  save.blueprints += payout.blueprints;
+  saveGame(save);
+  return payout;
+}
+
+export function salvageAllCommonGear(save: PlayerSave): { count: number; coins: number; blueprints: number } {
+  const eqSet = new Set(Object.values(save.equipped).filter(Boolean));
+  let count = 0;
+  let coins = 0;
+  let blueprints = 0;
+  const kept: GearItem[] = [];
+  for (const item of save.inventory) {
+    if (!eqSet.has(item.uid) && item.rarity === 'common') {
+      const y = getSalvageYield(item);
+      coins += y.coins;
+      blueprints += y.blueprints;
+      count += 1;
+    } else {
+      kept.push(item);
+    }
+  }
+  if (count > 0) {
+    save.inventory = kept;
+    save.coins += coins;
+    save.blueprints += blueprints;
+    saveGame(save);
+  }
+  return { count, coins, blueprints };
+}
+
+export function rollWheelReward(save: PlayerSave): { slice: WheelSliceDef; index: number } {
+  const totalWeight = WHEEL_REWARDS.reduce((acc, s) => acc + s.weight, 0);
+  let r = Math.random() * totalWeight;
+  let pickedIdx = 0;
+  for (let i = 0; i < WHEEL_REWARDS.length; i++) {
+    r -= WHEEL_REWARDS[i].weight;
+    if (r <= 0) {
+      pickedIdx = i;
+      break;
+    }
+  }
+  const slice = WHEEL_REWARDS[pickedIdx];
+  save.coins += slice.coins || 0;
+  save.gems += slice.gems || 0;
+  save.blueprints += slice.blueprints || 0;
+  save.cyberKeys += slice.cyberKeys || 0;
+  save.reviveTokens += slice.reviveTokens || 0;
+  saveGame(save);
+  return { slice, index: pickedIdx };
+}
+
 export function rollCrateDrop(crateType: 'basic' | 'cyber' | 'mythic', save: PlayerSave): GearItem {
   const tpl = GEAR_TEMPLATES[Math.floor(Math.random() * GEAR_TEMPLATES.length)];
   const r = Math.random();
@@ -547,6 +635,13 @@ export function applyRunOutcome(save: PlayerSave, summary: RunSummary): void {
     save.gems += 15;
   }
 
+  // Record newly discovered weapon evolutions for Codex
+  for (const wId of summary.evoIdsUnlocked || []) {
+    if (!save.discoveredEvos.includes(wId)) {
+      save.discoveredEvos.push(wId);
+    }
+  }
+
   // Fill Piggy Bank up to cap from monster kills
   const piggyAdd = Math.min(save.piggyMaxGems - save.piggyGems, Math.max(10, Math.floor(summary.kills / 12)));
   save.piggyGems += piggyAdd;
@@ -583,6 +678,13 @@ export function applyRunOutcome(save: PlayerSave, summary: RunSummary): void {
     }
     save.leaderboard.sort((a, b) => b.score - a.score);
     save.leaderboard = save.leaderboard.slice(0, 20);
+  } else if (summary.chapterId === 88) {
+    if (summary.victory) {
+      save.bossRushClears = (save.bossRushClears || 0) + 1;
+      if (save.bestBossRushSec === 0 || summary.survivedSec < save.bestBossRushSec) {
+        save.bestBossRushSec = summary.survivedSec;
+      }
+    }
   } else if (summary.victory) {
     if (!save.clearedChapters.includes(summary.chapterId)) {
       save.clearedChapters.push(summary.chapterId);
@@ -594,6 +696,9 @@ export function applyRunOutcome(save: PlayerSave, summary: RunSummary): void {
 
   if (summary.newGearDrop) {
     save.inventory.unshift(summary.newGearDrop);
+    if (!save.equipped[summary.newGearDrop.slot]) {
+      save.equipped[summary.newGearDrop.slot] = summary.newGearDrop.uid;
+    }
   }
 
   saveGame(save);

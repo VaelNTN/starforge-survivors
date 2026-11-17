@@ -16,6 +16,9 @@ export const ADMOB_CONFIG = {
   dailyAdGemsLimit: 5,
   dailyAdGemsAmount: 60,
   dailyAdKeysLimit: 3,
+  dailyWheelFreeLimit: 1,
+  dailyWheelAdSpinsLimit: 3,
+  wheelGemCost: 60,
 } as const;
 
 /**

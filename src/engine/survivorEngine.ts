@@ -1,6 +1,7 @@
 import { HEROES, PASSIVES, WEAPONS } from '../data/gameCatalog';
 import { audio } from '../services/audio';
 import {
+  ActiveRunBoosters,
   ChapterDef,
   CombatStats,
   HeroDef,
@@ -30,7 +31,10 @@ export interface HudSnapshot {
   elapsedSec: number;
   durationSec: number;
   isEndless: boolean;
+  isBossRush: boolean;
+  bossRushStage: number;
   kills: number;
+  combo: number;
   coins: number;
   gems: number;
   ultCharge: number; // 0..100
@@ -76,6 +80,7 @@ interface Projectile {
   explosive?: boolean;
   boomerang?: boolean;
   vampiric?: boolean;
+  homing?: boolean;
   hitIds: Set<number>;
 }
 
@@ -149,7 +154,7 @@ export interface EngineCallbacks {
   onLevelUp: (choices: DraftOption[]) => void;
   onChestJackpot: (rewards: DraftOption[], bonusCoins: number) => void;
   onBossBanner: (bossName: string) => void;
-  onDeathOffer: (canFreeRevive: boolean) => void;
+  onDeathOffer: (canFreeAd: boolean) => void;
   onFinish: (result: {
     victory: boolean;
     survivedSec: number;
@@ -160,9 +165,19 @@ export interface EngineCallbacks {
     blueprintsEarned: number;
     levelReached: number;
     evolutionsUnlocked: string[];
+    evoIdsUnlocked: WeaponId[];
+    maxCombo: number;
     newGearDrop: ReturnType<typeof createGearItem> | null;
   }) => void;
 }
+
+const BOSS_RUSH_NAMES = [
+  'Dread-Mech Mk.I',
+  'Scorpio Colossus',
+  'Glacier Sovereign',
+  'Inferno Behemoth',
+  'Omega Overlord',
+];
 
 export class SurvivorEngine {
   private canvas: HTMLCanvasElement;
@@ -170,11 +185,13 @@ export class SurvivorEngine {
   private chapter: ChapterDef;
   private hero: HeroDef;
   private stats: CombatStats;
+  private boosters: ActiveRunBoosters;
   private damageNumbers: boolean;
   private vibration: boolean;
   private cb: EngineCallbacks;
 
   private rafId: number | null = null;
+  private victoryTimer: number | null = null;
   private lastTs = 0;
   private paused = false;
   private ended = false;
@@ -197,6 +214,9 @@ export class SurvivorEngine {
 
   private elapsedSec = 0;
   private kills = 0;
+  private comboCount = 0;
+  private comboTimer = 0;
+  private maxCombo = 0;
   private bossesKilled = 0;
   private coinsEarned = 0;
   private gemsEarned = 0;
@@ -208,6 +228,7 @@ export class SurvivorEngine {
   private weapons = new Map<WeaponId, { lv: number; cd: number; evolved: boolean }>();
   private passives = new Map<PassiveId, number>();
   private evosUnlocked: string[] = [];
+  private evoIdsUnlocked: WeaponId[] = [];
   private orbitalAngle = 0;
 
   // Entities
@@ -227,6 +248,9 @@ export class SurvivorEngine {
   private eliteSpawnedMin = new Set<number>();
   private bossSpawned = false;
   private activeBossId: number | null = null;
+  private activeBossLabel: string | null = null;
+  private bossRushStage = 0;
+  private bossRushCooldown = 2.0;
 
   // Input state
   private keys = new Set<string>();
@@ -248,6 +272,7 @@ export class SurvivorEngine {
     stats: CombatStats,
     damageNumbers: boolean,
     vibration: boolean,
+    boosters: ActiveRunBoosters,
     cb: EngineCallbacks
   ) {
     this.canvas = canvas;
@@ -256,14 +281,28 @@ export class SurvivorEngine {
     this.ctx = context;
     this.chapter = chapter;
     this.hero = HEROES.find((h) => h.id === heroId) || HEROES[0];
-    this.stats = stats;
+    this.stats = boosters.overdriveAtk ? { ...stats, atk: Math.round(stats.atk * 1.25) } : stats;
+    this.boosters = boosters;
     this.damageNumbers = damageNumbers;
     this.vibration = vibration;
     this.cb = cb;
 
-    this.hp = stats.maxHp;
-    this.revivesLeft = stats.revives;
+    this.hp = this.stats.maxHp;
+    this.revivesLeft = this.stats.revives;
     this.weapons.set(this.hero.startingWeapon, { lv: 1, cd: 0.25, evolved: false });
+
+    if (boosters.extraWeapon) {
+      const others = WEAPONS.filter((w) => w.id !== this.hero.startingWeapon);
+      const bonusW = others[Math.floor(Math.random() * others.length)];
+      if (bonusW) {
+        this.weapons.set(bonusW.id, { lv: 1, cd: 0.35, evolved: false });
+      }
+    }
+
+    if (chapter.mode === 'boss_rush') {
+      // Give starter level-up boost in Boss Rush so the fight feels immediately intense
+      this.xp = this.xpNext;
+    }
 
     this.resize();
     this.bindInput();
@@ -350,6 +389,7 @@ export class SurvivorEngine {
   destroy(): void {
     this.ended = true;
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
+    if (this.victoryTimer !== null) window.clearTimeout(this.victoryTimer);
     audio.stopMusicLoop();
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
@@ -369,6 +409,16 @@ export class SurvivorEngine {
     } else {
       this.lastTs = performance.now();
     }
+  }
+
+  getLoadoutSnapshot(): {
+    weapons: { id: WeaponId; lv: number; evolved: boolean }[];
+    passives: { id: PassiveId; lv: number }[];
+  } {
+    return {
+      weapons: Array.from(this.weapons.entries()).map(([id, s]) => ({ id, lv: s.lv, evolved: s.evolved })),
+      passives: Array.from(this.passives.entries()).map(([id, lv]) => ({ id, lv })),
+    };
   }
 
   triggerDash(): void {
@@ -395,7 +445,8 @@ export class SurvivorEngine {
     const baseUltDmg = this.stats.atk * 5.8;
 
     if (this.hero.id === 'titan') {
-      this.hp = Math.min(this.stats.maxHp, this.hp + Math.round(this.stats.maxHp * 0.4));
+      const maxHp = this.getEffectiveMaxHp();
+      this.hp = Math.min(maxHp, this.hp + Math.round(maxHp * 0.4));
       this.spawnRing(this.px, this.py, 280, '#f59e0b', 0.45);
       for (const e of [...this.enemies]) {
         const d = Math.hypot(e.x - this.px, e.y - this.py);
@@ -433,7 +484,7 @@ export class SurvivorEngine {
           healed += 2;
         }
       }
-      this.hp = Math.min(this.stats.maxHp, this.hp + Math.min(80, healed));
+      this.hp = Math.min(this.getEffectiveMaxHp(), this.hp + Math.min(80, healed));
     } else {
       // Kael Omnislash Nova
       this.spawnRing(this.px, this.py, 290, '#38bdf8', 0.45);
@@ -551,6 +602,20 @@ export class SurvivorEngine {
     return picked;
   }
 
+  private checkPendingLevelUp(): boolean {
+    if (this.xp >= this.xpNext && !this.paused && !this.ended) {
+      this.xp -= this.xpNext;
+      this.level += 1;
+      this.xpNext = Math.round(24 + this.level * 15 + Math.pow(this.level, 1.35) * 4);
+      audio.playLevelUp();
+      this.setPaused(true);
+      this.emitHud();
+      this.cb.onLevelUp(this.buildDraftOptions());
+      return true;
+    }
+    return false;
+  }
+
   applyDraftOption(opt: DraftOption): void {
     if (opt.kind === 'evo') {
       const wId = opt.id as WeaponId;
@@ -559,6 +624,7 @@ export class SurvivorEngine {
         st.evolved = true;
         st.lv = 6;
         if (!this.evosUnlocked.includes(opt.name)) this.evosUnlocked.push(opt.name);
+        if (!this.evoIdsUnlocked.includes(wId)) this.evoIdsUnlocked.push(wId);
         audio.playEvoUnlock();
       }
     } else if (opt.kind === 'weapon') {
@@ -570,7 +636,8 @@ export class SurvivorEngine {
       const pId = opt.id as PassiveId;
       this.passives.set(pId, (this.passives.get(pId) || 0) + 1);
       if (pId === 'cryo_reactor') {
-        this.hp = Math.min(this.stats.maxHp * 1.9, this.hp + Math.round(this.stats.maxHp * 0.18));
+        const effMax = this.getEffectiveMaxHp();
+        this.hp = Math.min(effMax, this.hp + Math.round(this.stats.maxHp * 0.18));
       }
     } else {
       this.hp = Math.min(this.getEffectiveMaxHp(), this.hp + Math.round(this.getEffectiveMaxHp() * 0.35));
@@ -579,6 +646,7 @@ export class SurvivorEngine {
 
     this.setPaused(false);
     this.emitHud();
+    this.checkPendingLevelUp();
   }
 
   revivePlayer(): void {
@@ -605,11 +673,16 @@ export class SurvivorEngine {
   abortAndFinish(victory: boolean): void {
     if (this.ended) return;
     this.ended = true;
+    if (this.victoryTimer !== null) {
+      window.clearTimeout(this.victoryTimer);
+      this.victoryTimer = null;
+    }
     audio.stopMusicLoop();
 
+    const luckMult = this.boosters.doubleLuck ? 1.5 : 1.0;
     const bonusCoins = victory ? this.chapter.rewardCoins : Math.round(this.elapsedSec * 6);
     const bonusGems = victory ? this.chapter.rewardGems : Math.floor(this.elapsedSec / 45) * 3;
-    const totalCoins = Math.round((this.coinsEarned + bonusCoins) * this.stats.goldMult);
+    const totalCoins = Math.round((this.coinsEarned + bonusCoins) * this.stats.goldMult * luckMult);
     const totalGems = this.gemsEarned + bonusGems;
     const blueprints = Math.max(1, Math.floor(this.bossesKilled * 3 + this.elapsedSec / 35 + (victory ? 6 : 0)));
 
@@ -618,8 +691,10 @@ export class SurvivorEngine {
       const tpl = GEAR_TEMPLATES[Math.floor(Math.random() * GEAR_TEMPLATES.length)];
       let rarity: Rarity = 'common';
       const r = Math.random();
-      if (victory && r < 0.25) rarity = 'rare';
-      else if (r < 0.45 || victory) rarity = 'uncommon';
+      const rareThresh = this.boosters.doubleLuck ? 0.42 : 0.25;
+      if (victory && r < 0.05 && this.boosters.doubleLuck) rarity = 'epic';
+      else if (victory && r < rareThresh) rarity = 'rare';
+      else if (r < 0.48 || victory) rarity = 'uncommon';
       gearDrop = createGearItem(tpl.templateId, rarity, 1);
     }
 
@@ -633,6 +708,8 @@ export class SurvivorEngine {
       blueprintsEarned: blueprints,
       levelReached: this.level,
       evolutionsUnlocked: this.evosUnlocked,
+      evoIdsUnlocked: this.evoIdsUnlocked,
+      maxCombo: this.maxCombo,
       newGearDrop: gearDrop,
     });
   }
@@ -659,7 +736,8 @@ export class SurvivorEngine {
 
   private getPickupRadius(): number {
     const lv = this.passives.get('magnet_halo') || 0;
-    return Math.round(this.stats.pickupRadius * (1 + lv * 0.35));
+    const base = this.stats.pickupRadius * (this.boosters.doubleLuck ? 1.35 : 1);
+    return Math.round(base * (1 + lv * 0.35));
   }
 
   private update(dt: number): void {
@@ -667,6 +745,12 @@ export class SurvivorEngine {
     if (this.invulnTimer > 0) this.invulnTimer = Math.max(0, this.invulnTimer - dt);
     if (this.dashCd > 0) this.dashCd = Math.max(0, this.dashCd - dt);
     if (this.screenShake > 0) this.screenShake = Math.max(0, this.screenShake - dt * 28);
+    if (this.comboTimer > 0) {
+      this.comboTimer -= dt;
+      if (this.comboTimer <= 0) this.comboCount = 0;
+    }
+
+    if (this.checkPendingLevelUp()) return;
 
     // Passive HP Regen
     const regen = this.stats.hpRegenPerSec + (this.passives.get('blood_ruby') || 0) * 1.5;
@@ -742,13 +826,22 @@ export class SurvivorEngine {
     });
 
     // Boss & Chapter Victory Check
-    if (this.chapter.mode === 'chapter' && !this.bossSpawned && this.elapsedSec >= this.chapter.durationSec) {
-      this.spawnBoss();
+    if (this.chapter.mode === 'boss_rush') {
+      if (!this.activeBossId && this.bossRushStage < 5) {
+        this.bossRushCooldown -= dt;
+        if (this.bossRushCooldown <= 0) {
+          this.bossRushStage += 1;
+          const label = `Boss ${this.bossRushStage}/5: ${BOSS_RUSH_NAMES[this.bossRushStage - 1]}`;
+          this.spawnBoss(label, 0.72 + this.bossRushStage * 0.32);
+        }
+      }
+    } else if (this.chapter.mode === 'chapter' && !this.bossSpawned && this.elapsedSec >= this.chapter.durationSec) {
+      this.spawnBoss(this.chapter.bossName, 1.0);
     } else if (this.chapter.mode === 'endless') {
       const minute = Math.floor(this.elapsedSec / 60);
       if (minute >= 1 && !this.eliteSpawnedMin.has(minute)) {
         this.eliteSpawnedMin.add(minute);
-        if (minute % 2 === 0) this.spawnBoss();
+        if (minute % 2 === 0) this.spawnBoss(`${this.chapter.bossName} Mk.${minute / 2}`, 1 + minute * 0.12);
         else this.spawnEnemy('elite');
       }
     } else if (this.chapter.mode === 'chapter') {
@@ -770,12 +863,13 @@ export class SurvivorEngine {
     const intensity = 1 + this.elapsedSec / 45;
     const rate = (1.65 + intensity * 0.85) * this.chapter.spawnRateMult;
     this.spawnAccum += dt * rate;
+    const goblinChance = this.boosters.doubleLuck ? 0.05 : 0.025;
 
     while (this.spawnAccum >= 1 && this.enemies.length < 155) {
       this.spawnAccum -= 1;
       const r = Math.random();
       let kind: Enemy['kind'] = 'swarmer';
-      if (r < 0.025) kind = 'goblin';
+      if (r < goblinChance) kind = 'goblin';
       else if (this.elapsedSec > 90 && r < 0.14) kind = 'splitter';
       else if (this.elapsedSec > 55 && r < 0.28) kind = 'spitter';
       else if (this.elapsedSec > 30 && r < 0.48) kind = 'sentinel';
@@ -872,13 +966,16 @@ export class SurvivorEngine {
     return enemy;
   }
 
-  private spawnBoss(): void {
+  private spawnBoss(bossTitle: string, hpScale = 1.0): void {
     this.bossSpawned = true;
     const boss = this.spawnEnemy('boss');
+    boss.hp = Math.round(boss.hp * hpScale);
+    boss.maxHp = boss.hp;
     this.activeBossId = boss.id;
+    this.activeBossLabel = bossTitle;
     audio.playBossWarning();
     if (this.vibration && navigator.vibrate) navigator.vibrate([80, 60, 120]);
-    this.cb.onBossBanner(this.chapter.bossName);
+    this.cb.onBossBanner(bossTitle);
   }
 
   private findNearestEnemy(maxRange = 540): Enemy | null {
@@ -1038,24 +1135,30 @@ export class SurvivorEngine {
         }
       } else if (wId === 'inferno_drone') {
         const missiles = (st.evolved ? 5 : 1 + st.lv) + extraProj;
+        const droneCount = st.evolved ? 4 : 2;
         for (let i = 0; i < missiles; i++) {
+          const droneIdx = i % droneCount;
+          const dAng = this.elapsedSec * 2.4 + (droneIdx * Math.PI * 2) / droneCount;
+          const sx = this.px + Math.cos(dAng) * 34;
+          const sy = this.py + Math.sin(dAng) * 34;
           const target = this.enemies[(i * 3) % Math.max(1, this.enemies.length)] || null;
           const a = target
-            ? Math.atan2(target.y - this.py, target.x - this.px) + (Math.random() - 0.5) * 0.25
+            ? Math.atan2(target.y - sy, target.x - sx) + (Math.random() - 0.5) * 0.22
             : Math.random() * Math.PI * 2;
           this.projectiles.push({
             fromEnemy: false,
-            x: this.px + Math.cos(this.elapsedSec * 3 + i) * 28,
-            y: this.py + Math.sin(this.elapsedSec * 3 + i) * 28,
-            vx: Math.cos(a) * 390,
-            vy: Math.sin(a) * 390,
+            x: sx,
+            y: sy,
+            vx: Math.cos(a) * 360,
+            vy: Math.sin(a) * 360,
             radius: st.evolved ? 8 : 6,
             damage: dmg,
             pierce: 1,
-            life: 1.6,
-            maxLife: 1.6,
+            life: 1.85,
+            maxLife: 1.85,
             color: st.evolved ? '#fbbf24' : '#fb7185',
             explosive: true,
+            homing: true,
             hitIds: new Set(),
           });
         }
@@ -1112,6 +1215,30 @@ export class SurvivorEngine {
         const ang = Math.atan2(this.py - p.y, this.px - p.x);
         p.vx += Math.cos(ang) * 950 * dt;
         p.vy += Math.sin(ang) * 950 * dt;
+      }
+
+      if (p.homing && this.enemies.length > 0) {
+        let nearest: Enemy | null = null;
+        let bestD = 380 * 380;
+        for (const e of this.enemies) {
+          const d2 = (e.x - p.x) ** 2 + (e.y - p.y) ** 2;
+          if (d2 < bestD) {
+            bestD = d2;
+            nearest = e;
+          }
+        }
+        if (nearest) {
+          const spd = Math.hypot(p.vx, p.vy) || 360;
+          const desired = Math.atan2(nearest.y - p.y, nearest.x - p.x);
+          const cur = Math.atan2(p.vy, p.vx);
+          let diff = desired - cur;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          const turn = Math.max(-5.8 * dt, Math.min(5.8 * dt, diff));
+          const nextAng = cur + turn;
+          p.vx = Math.cos(nextAng) * spd;
+          p.vy = Math.sin(nextAng) * spd;
+        }
       }
 
       p.x += p.vx * dt;
@@ -1300,22 +1427,40 @@ export class SurvivorEngine {
     if (idx >= 0) this.enemies.splice(idx, 1);
 
     this.kills += 1;
+    this.comboCount += 1;
+    this.comboTimer = 2.5;
+    if (this.comboCount > this.maxCombo) this.maxCombo = this.comboCount;
+
+    if (this.comboCount > 0 && this.comboCount % 50 === 0) {
+      this.ultCharge = Math.min(100, this.ultCharge + 8);
+      this.coinsEarned += 40;
+      this.floats.push({
+        x: this.px,
+        y: this.py - 36,
+        vy: -32,
+        text: `🔥 ${this.comboCount}x COMBO!`,
+        color: '#fbbf24',
+        life: 1.0,
+        scale: 1.35,
+      });
+    }
+
     this.ultCharge = Math.min(100, this.ultCharge + (e.kind === 'elite' ? 20 : e.kind === 'boss' ? 40 : 1.4));
 
     // Burst particles
-    const pCount = e.kind === 'boss' ? 28 : e.kind === 'elite' ? 14 : 5;
+    const pCount = e.kind === 'boss' ? 32 : e.kind === 'elite' ? 16 : 6;
     for (let i = 0; i < pCount; i++) {
       const a = Math.random() * Math.PI * 2;
-      const spd = 40 + Math.random() * 140;
+      const spd = 40 + Math.random() * 150;
       this.particles.push({
         x: e.x,
         y: e.y,
         vx: Math.cos(a) * spd,
         vy: Math.sin(a) * spd,
-        size: e.kind === 'boss' ? 5 : 3,
+        size: e.kind === 'boss' ? 5.5 : 3,
         color: e.color,
-        life: 0.35 + Math.random() * 0.2,
-        maxLife: 0.55,
+        life: 0.35 + Math.random() * 0.25,
+        maxLife: 0.6,
       });
     }
 
@@ -1345,12 +1490,22 @@ export class SurvivorEngine {
     } else if (e.kind === 'boss') {
       this.bossesKilled += 1;
       this.activeBossId = null;
+      this.activeBossLabel = null;
       this.gemsEarned += 15;
       this.coinsEarned += 450;
       if (this.chapter.mode === 'chapter') {
         this.spawnRing(e.x, e.y, 260, '#fbbf24', 0.6);
-        window.setTimeout(() => this.abortAndFinish(true), 650);
+        this.victoryTimer = window.setTimeout(() => this.abortAndFinish(true), 650);
         return;
+      } else if (this.chapter.mode === 'boss_rush') {
+        this.spawnRing(e.x, e.y, 240, '#fbbf24', 0.5);
+        this.hp = Math.min(this.getEffectiveMaxHp(), this.hp + Math.round(this.getEffectiveMaxHp() * 0.25));
+        if (this.bossRushStage >= 5) {
+          this.victoryTimer = window.setTimeout(() => this.abortAndFinish(true), 650);
+          return;
+        }
+        this.bossRushCooldown = 2.6;
+        this.pickups.push({ kind: 'chest', x: e.x, y: e.y, val: 1, magnetized: false });
       } else {
         this.pickups.push({ kind: 'chest', x: e.x, y: e.y, val: 1, magnetized: false });
       }
@@ -1358,10 +1513,11 @@ export class SurvivorEngine {
       const xpKind: Pickup['kind'] = e.xpValue >= 10 ? 'xp_l' : e.xpValue >= 6 ? 'xp_m' : 'xp_s';
       this.pickups.push({ kind: xpKind, x: e.x, y: e.y, val: e.xpValue, magnetized: false });
       const dropRoll = Math.random();
-      if (dropRoll < 0.08) this.pickups.push({ kind: 'coin', x: e.x + 6, y: e.y, val: 15, magnetized: false });
-      else if (dropRoll < 0.087) this.pickups.push({ kind: 'heal', x: e.x, y: e.y, val: 30, magnetized: false });
-      else if (dropRoll < 0.091) this.pickups.push({ kind: 'magnet', x: e.x, y: e.y, val: 1, magnetized: false });
-      else if (dropRoll < 0.094) this.pickups.push({ kind: 'bomb', x: e.x, y: e.y, val: 1, magnetized: false });
+      const luckBoost = this.boosters.doubleLuck ? 1.45 : 1.0;
+      if (dropRoll < 0.08 * luckBoost) this.pickups.push({ kind: 'coin', x: e.x + 6, y: e.y, val: 15, magnetized: false });
+      else if (dropRoll < 0.087 * luckBoost) this.pickups.push({ kind: 'heal', x: e.x, y: e.y, val: 30, magnetized: false });
+      else if (dropRoll < 0.091 * luckBoost) this.pickups.push({ kind: 'magnet', x: e.x, y: e.y, val: 1, magnetized: false });
+      else if (dropRoll < 0.094 * luckBoost) this.pickups.push({ kind: 'bomb', x: e.x, y: e.y, val: 1, magnetized: false });
     }
   }
 
@@ -1386,11 +1542,12 @@ export class SurvivorEngine {
 
   private updatePickups(dt: number): void {
     const rad = this.getPickupRadius();
-    const xpMult = this.stats.xpMult + (this.passives.get('blood_ruby') || 0) * 0.1;
-    const greedBonus = 1 + (this.passives.get('blood_ruby') || 0) * 0.1;
+    const xpMult = (this.stats.xpMult + (this.passives.get('blood_ruby') || 0) * 0.1) * (this.boosters.doubleLuck ? 1.25 : 1);
+    const greedBonus = (1 + (this.passives.get('blood_ruby') || 0) * 0.1) * (this.boosters.doubleLuck ? 1.25 : 1);
     const alive: Pickup[] = [];
 
-    for (const p of this.pickups) {
+    for (let i = 0; i < this.pickups.length; i++) {
+      const p = this.pickups[i];
       const dx = this.px - p.x;
       const dy = this.py - p.y;
       const dist = Math.hypot(dx, dy);
@@ -1408,13 +1565,10 @@ export class SurvivorEngine {
         if (p.kind === 'xp_s' || p.kind === 'xp_m' || p.kind === 'xp_l') {
           audio.playXpPickup();
           this.xp += p.val * xpMult;
-          if (this.xp >= this.xpNext) {
-            this.xp -= this.xpNext;
-            this.level += 1;
-            this.xpNext = Math.round(24 + this.level * 15 + Math.pow(this.level, 1.35) * 4);
-            audio.playLevelUp();
-            this.setPaused(true);
-            this.cb.onLevelUp(this.buildDraftOptions());
+          if (this.checkPendingLevelUp()) {
+            // Keep remaining uncollected pickups for after draft closes
+            for (let j = i + 1; j < this.pickups.length; j++) alive.push(this.pickups[j]);
+            break;
           }
         } else if (p.kind === 'coin') {
           this.coinsEarned += Math.round(p.val * greedBonus);
@@ -1446,7 +1600,7 @@ export class SurvivorEngine {
           this.setPaused(true);
           const count = Math.random() < 0.25 ? 3 : 1;
           const rewards: DraftOption[] = [];
-          for (let i = 0; i < count; i++) {
+          for (let k = 0; k < count; k++) {
             const opts = this.buildDraftOptions();
             const pick = opts[0];
             this.applyDraftOptionSilent(pick);
@@ -1455,6 +1609,8 @@ export class SurvivorEngine {
           const bonusCoins = 220 + this.level * 25;
           this.coinsEarned += bonusCoins;
           this.cb.onChestJackpot(rewards, bonusCoins);
+          for (let j = i + 1; j < this.pickups.length; j++) alive.push(this.pickups[j]);
+          break;
         }
         continue;
       }
@@ -1465,11 +1621,13 @@ export class SurvivorEngine {
 
   private applyDraftOptionSilent(opt: DraftOption): void {
     if (opt.kind === 'evo') {
-      const st = this.weapons.get(opt.id as WeaponId);
+      const wId = opt.id as WeaponId;
+      const st = this.weapons.get(wId);
       if (st) {
         st.evolved = true;
         st.lv = 6;
         if (!this.evosUnlocked.includes(opt.name)) this.evosUnlocked.push(opt.name);
+        if (!this.evoIdsUnlocked.includes(wId)) this.evoIdsUnlocked.push(wId);
       }
     } else if (opt.kind === 'weapon') {
       const wId = opt.id as WeaponId;
@@ -1496,12 +1654,15 @@ export class SurvivorEngine {
       elapsedSec: Math.floor(this.elapsedSec),
       durationSec: this.chapter.durationSec,
       isEndless: this.chapter.mode === 'endless',
+      isBossRush: this.chapter.mode === 'boss_rush',
+      bossRushStage: this.bossRushStage,
       kills: this.kills,
-      coins: Math.round(this.coinsEarned * this.stats.goldMult),
+      combo: this.comboCount,
+      coins: Math.round(this.coinsEarned * this.stats.goldMult * (this.boosters.doubleLuck ? 1.25 : 1)),
       gems: this.gemsEarned,
       ultCharge: Math.round(this.ultCharge),
       dashReadyFrac: this.dashCd <= 0 ? 1 : Math.max(0, 1 - this.dashCd / 3.0),
-      bossName: boss ? this.chapter.bossName : null,
+      bossName: boss ? (this.activeBossLabel || this.chapter.bossName) : null,
       bossHpFrac: boss ? Math.max(0, boss.hp / boss.maxHp) : 0,
       weapons: Array.from(this.weapons.entries()).map(([id, s]) => ({ id, lv: s.lv, evolved: s.evolved })),
       passives: Array.from(this.passives.entries()).map(([id, lv]) => ({ id, lv })),
@@ -1523,6 +1684,22 @@ export class SurvivorEngine {
     const shakeY = this.screenShake > 0 ? (Math.random() - 0.5) * this.screenShake : 0;
     const camX = this.px - w / 2 + shakeX;
     const camY = this.py - h / 2 + shakeY;
+
+    // Parallax subtle starfield
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    const starTile = 160;
+    const sx0 = Math.floor((camX * 0.45) / starTile) * starTile;
+    const sy0 = Math.floor((camY * 0.45) / starTile) * starTile;
+    for (let tx = sx0 - starTile; tx < camX * 0.45 + w + starTile; tx += starTile) {
+      for (let ty = sy0 - starTile; ty < camY * 0.45 + h + starTile; ty += starTile) {
+        const hash = Math.abs(Math.sin(tx * 12.9898 + ty * 78.233) * 43758.5453);
+        const rx = (hash % 1) * starTile;
+        const ry = ((hash * 7) % 1) * starTile;
+        const screenX = tx + rx - camX * 0.45;
+        const screenY = ty + ry - camY * 0.45;
+        ctx.fillRect(screenX, screenY, 2, 2);
+      }
+    }
 
     // Cyber grid floor
     const gridStep = 64;
@@ -1554,6 +1731,10 @@ export class SurvivorEngine {
       ctx.fill();
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(z.x, z.y, z.radius * (0.35 + ((this.elapsedSec * 1.6) % 0.65)), 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
@@ -1581,8 +1762,16 @@ export class SurvivorEngine {
       } else if (p.kind === 'gem') {
         ctx.fillStyle = '#f43f5e';
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+        ctx.moveTo(p.x, p.y - 8);
+        ctx.lineTo(p.x + 6, p.y - 2);
+        ctx.lineTo(p.x + 4, p.y + 7);
+        ctx.lineTo(p.x - 4, p.y + 7);
+        ctx.lineTo(p.x - 6, p.y - 2);
+        ctx.closePath();
         ctx.fill();
+        ctx.strokeStyle = '#fecdd3';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
       } else if (p.kind === 'heal') {
         ctx.fillStyle = '#10b981';
         ctx.fillRect(p.x - 7, p.y - 3, 14, 6);
@@ -1606,11 +1795,18 @@ export class SurvivorEngine {
         ctx.textAlign = 'center';
         ctx.fillText('B', p.x, p.y + 4);
       } else if (p.kind === 'chest') {
+        const pulse = 1 + Math.sin(this.elapsedSec * 6) * 0.08;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.scale(pulse, pulse);
         ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(p.x - 12, p.y - 10, 24, 20);
+        ctx.fillRect(-13, -10, 26, 20);
+        ctx.fillStyle = '#fde68a';
+        ctx.fillRect(-13, -3, 26, 4);
         ctx.strokeStyle = '#fef3c7';
         ctx.lineWidth = 2;
-        ctx.strokeRect(p.x - 12, p.y - 10, 24, 20);
+        ctx.strokeRect(-13, -10, 26, 20);
+        ctx.restore();
       }
     }
 
@@ -1638,28 +1834,114 @@ export class SurvivorEngine {
       ctx.restore();
     }
 
-    // Enemies
+    // Enemies (distinct sci-fi procedural silhouettes)
     for (const e of this.enemies) {
       if (Math.abs(e.x - this.px) > w * 0.72 || Math.abs(e.y - this.py) > h * 0.72) continue;
-      ctx.save();
-      ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : e.slowTimer > 0 ? '#60a5fa' : e.color;
-      ctx.beginPath();
-      if (e.kind === 'sentinel' || e.kind === 'boss') {
-        ctx.rect(e.x - e.radius, e.y - e.radius, e.radius * 2, e.radius * 2);
-      } else {
-        ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
-      }
-      ctx.fill();
+      const fill = e.hitFlash > 0 ? '#ffffff' : e.slowTimer > 0 ? '#60a5fa' : e.color;
+      const ang = Math.atan2(this.py - e.y, this.px - e.x);
 
-      if (e.kind === 'goblin' || e.kind === 'elite' || e.kind === 'boss') {
+      ctx.save();
+      ctx.translate(e.x, e.y);
+
+      if (e.kind === 'boss') {
+        ctx.rotate(this.elapsedSec * 0.6);
+        ctx.fillStyle = fill;
         ctx.strokeStyle = '#fef08a';
-        ctx.lineWidth = e.kind === 'boss' ? 3.5 : 2;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        for (let i = 0; i < 8; i++) {
+          const a = (i * Math.PI * 2) / 8;
+          const rad = i % 2 === 0 ? e.radius * 1.15 : e.radius * 0.85;
+          if (i === 0) ctx.moveTo(Math.cos(a) * rad, Math.sin(a) * rad);
+          else ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(0, 0, e.radius * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fef08a';
+        ctx.beginPath();
+        ctx.arc(0, 0, e.radius * 0.2, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (e.kind === 'elite') {
+        ctx.rotate(ang);
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const a = (i * Math.PI * 2) / 6;
+          if (i === 0) ctx.moveTo(Math.cos(a) * e.radius, Math.sin(a) * e.radius);
+          else ctx.lineTo(Math.cos(a) * e.radius, Math.sin(a) * e.radius);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(e.radius * 0.35, 0, 5, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (e.kind === 'sentinel') {
+        ctx.rotate(ang);
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 2;
+        ctx.fillRect(-e.radius, -e.radius, e.radius * 2, e.radius * 2);
+        ctx.strokeRect(-e.radius, -e.radius, e.radius * 2, e.radius * 2);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(e.radius * 0.3, -5, 6, 10);
+      } else if (e.kind === 'dasher' || e.kind === 'swarmer') {
+        ctx.rotate(ang);
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.moveTo(e.radius * 1.2, 0);
+        ctx.lineTo(-e.radius * 0.85, e.radius * 0.85);
+        ctx.lineTo(-e.radius * 0.45, 0);
+        ctx.lineTo(-e.radius * 0.85, -e.radius * 0.85);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(e.radius * 0.25, 0, 3, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (e.kind === 'goblin') {
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('$', 0, 4);
+      } else {
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+        ctx.lineWidth = 1.5;
         ctx.stroke();
       }
       ctx.restore();
+
+      // Compact HP bar for Boss/Elite/Sentinel when damaged
+      if (e.kind === 'boss' || e.kind === 'elite' || (e.kind === 'sentinel' && e.hp < e.maxHp)) {
+        const bw = e.radius * 2.2;
+        const frac = Math.max(0, Math.min(1, e.hp / e.maxHp));
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(e.x - bw / 2, e.y + e.radius + 5, bw, 4);
+        ctx.fillStyle = e.kind === 'boss' ? '#ef4444' : '#f59e0b';
+        ctx.fillRect(e.x - bw / 2, e.y + e.radius + 5, bw * frac, 4);
+      }
     }
 
-    // Orbitals render
+    // Orbitals render (toothed spinning saw blades)
     const orbState = this.weapons.get('orbital_saw');
     if (orbState) {
       const extraProj = Math.floor((this.passives.get('fusion_cell') || 0) / 2);
@@ -1669,13 +1951,46 @@ export class SurvivorEngine {
         const ang = this.orbitalAngle + (i * Math.PI * 2) / count;
         const ox = this.px + Math.cos(ang) * orbR;
         const oy = this.py + Math.sin(ang) * orbR;
+        const rSaw = orbState.evolved ? 15 : 11;
+        ctx.save();
+        ctx.translate(ox, oy);
+        ctx.rotate(this.elapsedSec * 12);
         ctx.fillStyle = orbState.evolved ? '#fbbf24' : '#38bdf8';
         ctx.beginPath();
-        ctx.arc(ox, oy, orbState.evolved ? 14 : 10, 0, Math.PI * 2);
+        for (let t = 0; t < 8; t++) {
+          const a = (t * Math.PI * 2) / 8;
+          const rr = t % 2 === 0 ? rSaw * 1.22 : rSaw * 0.72;
+          if (t === 0) ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
+          else ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+        }
+        ctx.closePath();
         ctx.fill();
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1.5;
         ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    // Phoenix Drones orbiting player when equipped
+    const droneState = this.weapons.get('inferno_drone');
+    if (droneState) {
+      const dCount = droneState.evolved ? 4 : 2;
+      for (let i = 0; i < dCount; i++) {
+        const dAng = this.elapsedSec * 2.4 + (i * Math.PI * 2) / dCount;
+        const dx = this.px + Math.cos(dAng) * 34;
+        const dy = this.py + Math.sin(dAng) * 34;
+        ctx.save();
+        ctx.translate(dx, dy);
+        ctx.fillStyle = droneState.evolved ? '#fbbf24' : '#fb7185';
+        ctx.beginPath();
+        ctx.moveTo(0, -6);
+        ctx.lineTo(7, 4);
+        ctx.lineTo(0, 1);
+        ctx.lineTo(-7, 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
       }
     }
 
@@ -1689,6 +2004,9 @@ export class SurvivorEngine {
       ctx.beginPath();
       ctx.arc(s.x, s.y, s.radius * 0.78, s.angle - s.spread / 2, s.angle + s.spread / 2);
       ctx.stroke();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 4;
+      ctx.stroke();
       ctx.restore();
     }
 
@@ -1697,22 +2015,47 @@ export class SurvivorEngine {
       ctx.save();
       ctx.globalAlpha = Math.min(1, l.life * 4);
       ctx.strokeStyle = l.color;
-      ctx.lineWidth = 3.5;
+      ctx.lineWidth = 4;
       ctx.beginPath();
       l.points.forEach((pt, idx) => {
         if (idx === 0) ctx.moveTo(pt.x, pt.y);
         else ctx.lineTo(pt.x, pt.y);
       });
       ctx.stroke();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
       ctx.restore();
     }
 
     // Projectiles
     for (const p of this.projectiles) {
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      if (p.boomerang) {
+        ctx.rotate(this.elapsedSec * 15);
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius, -Math.PI * 0.7, Math.PI * 0.7);
+        ctx.stroke();
+      } else if (!p.fromEnemy) {
+        const ang = Math.atan2(p.vy, p.vx);
+        ctx.rotate(ang);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.radius * 1.4, -p.radius * 0.65, p.radius * 2.8, p.radius * 1.3);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(-p.radius * 0.6, -p.radius * 0.3, p.radius * 1.4, p.radius * 0.6);
+      } else {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+      ctx.restore();
     }
 
     // Particles
@@ -1736,26 +2079,34 @@ export class SurvivorEngine {
     ctx.arc(this.px, this.py, this.getPickupRadius(), 0, Math.PI * 2);
     ctx.stroke();
 
-    // Hero Body + Glow
+    // Hero Body + Shoulder Silhouette + Glow
+    ctx.save();
+    ctx.translate(this.px, this.py);
+    ctx.rotate(this.facingAngle);
     ctx.shadowColor = this.hero.accentColor;
     ctx.shadowBlur = 16;
+    ctx.fillStyle = this.hero.secondaryColor;
+    ctx.beginPath();
+    ctx.roundRect(-12, -16, 18, 32, 6);
+    ctx.fill();
     ctx.fillStyle = this.hero.accentColor;
     ctx.beginPath();
-    ctx.arc(this.px, this.py, 15, 0, Math.PI * 2);
+    ctx.arc(0, 0, 14, 0, Math.PI * 2);
     ctx.fill();
     ctx.shadowBlur = 0;
 
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 2.2;
     ctx.stroke();
 
     // Facing visor
-    const vx = this.px + Math.cos(this.facingAngle) * 7;
-    const vy = this.py + Math.sin(this.facingAngle) * 7;
     ctx.fillStyle = '#0f172a';
     ctx.beginPath();
-    ctx.arc(vx, vy, 5, 0, Math.PI * 2);
+    ctx.roundRect(4, -7, 8, 14, 3);
     ctx.fill();
+    ctx.fillStyle = '#e0f2fe';
+    ctx.fillRect(7, -5, 3, 10);
+    ctx.restore();
 
     // Small overhead HP bar
     const barW = 36;
@@ -1778,6 +2129,45 @@ export class SurvivorEngine {
     }
 
     ctx.restore();
+
+    // Off-screen indicators for Boss / Chests / Goblins
+    const markers: { x: number; y: number; color: string; label: string }[] = [];
+    for (const e of this.enemies) {
+      if (e.kind === 'boss' || e.kind === 'elite' || e.kind === 'goblin') {
+        markers.push({
+          x: e.x,
+          y: e.y,
+          color: e.kind === 'boss' ? '#ef4444' : e.kind === 'elite' ? '#e879f9' : '#fbbf24',
+          label: e.kind === 'boss' ? 'BOSS' : e.kind === 'elite' ? 'ELITE' : '$',
+        });
+      }
+    }
+    for (const p of this.pickups) {
+      if (p.kind === 'chest') markers.push({ x: p.x, y: p.y, color: '#fbbf24', label: '🎁' });
+    }
+    for (const m of markers) {
+      const sx = m.x - camX;
+      const sy = m.y - camY;
+      if (sx >= 16 && sx <= w - 16 && sy >= 16 && sy <= h - 16) continue;
+      const ang = Math.atan2(sy - h / 2, sx - w / 2);
+      const pad = 26;
+      const ix = Math.max(pad, Math.min(w - pad, w / 2 + Math.cos(ang) * (w / 2 - pad)));
+      const iy = Math.max(pad + 60, Math.min(h - pad - 60, h / 2 + Math.sin(ang) * (h / 2 - pad)));
+      ctx.save();
+      ctx.translate(ix, iy);
+      ctx.fillStyle = m.color;
+      ctx.beginPath();
+      ctx.arc(0, 0, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 8px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(m.label, 0, 3);
+      ctx.restore();
+    }
 
     // Virtual Floating Joystick HUD
     if (this.touchActive) {

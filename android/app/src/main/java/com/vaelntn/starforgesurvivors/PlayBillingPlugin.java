@@ -142,21 +142,58 @@ public class PlayBillingPlugin extends Plugin implements PurchasesUpdatedListene
         });
     }
 
+    private void ensureConnected(Runnable onReady, Runnable onFailed) {
+        if (isConnected && billingClient.isReady()) {
+            onReady.run();
+            return;
+        }
+        billingClient.startConnection(new BillingClientStateListener() {
+            @Override
+            public void onBillingSetupFinished(@NonNull BillingResult result) {
+                if (result.getResponseCode() == BillingClient.BillingResponseCode.OK) {
+                    isConnected = true;
+                    onReady.run();
+                } else {
+                    isConnected = false;
+                    onFailed.run();
+                }
+            }
+
+            @Override
+            public void onBillingServiceDisconnected() {
+                isConnected = false;
+            }
+        });
+    }
+
     @PluginMethod
     public void purchase(PluginCall call) {
         String sku = call.getString("productId", "");
         String type = call.getString("productType", "inapp");
         boolean isConsumable = Boolean.TRUE.equals(call.getBoolean("isConsumable", true));
 
-        if (!isConnected || !billingClient.isReady()) {
-            JSObject err = new JSObject();
-            err.put("purchased", false);
-            err.put("productId", sku);
-            err.put("error", "BILLING_UNAVAILABLE");
-            call.resolve(err);
+        if (pendingPurchaseCall != null) {
+            JSObject busy = new JSObject();
+            busy.put("purchased", false);
+            busy.put("productId", sku);
+            busy.put("error", "PURCHASE_IN_PROGRESS");
+            call.resolve(busy);
             return;
         }
 
+        ensureConnected(
+                () -> startPurchaseLookup(call, sku, type, isConsumable),
+                () -> {
+                    JSObject err = new JSObject();
+                    err.put("purchased", false);
+                    err.put("productId", sku);
+                    err.put("error", "BILLING_UNAVAILABLE");
+                    call.resolve(err);
+                }
+        );
+    }
+
+    private void startPurchaseLookup(PluginCall call, String sku, String type, boolean isConsumable) {
         ProductDetails pd = productCache.get(sku);
         if (pd == null) {
             List<QueryProductDetailsParams.Product> one = Collections.singletonList(
@@ -212,11 +249,18 @@ public class PlayBillingPlugin extends Plugin implements PurchasesUpdatedListene
 
         activity.runOnUiThread(() -> {
             BillingResult launchRes = billingClient.launchBillingFlow(activity, flowParams);
-            if (launchRes.getResponseCode() != BillingClient.BillingResponseCode.OK && pendingPurchaseCall != null) {
+            int code = launchRes.getResponseCode();
+            if (code == BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED && pendingPurchaseCall != null) {
+                PluginCall c = pendingPurchaseCall;
+                String s = pendingSku;
+                boolean cons = pendingIsConsumable;
+                pendingPurchaseCall = null;
+                handleAlreadyOwned(c, s, cons);
+            } else if (code != BillingClient.BillingResponseCode.OK && pendingPurchaseCall != null) {
                 JSObject err = new JSObject();
                 err.put("purchased", false);
                 err.put("productId", sku);
-                err.put("error", "LAUNCH_FAILED_" + launchRes.getResponseCode());
+                err.put("error", "LAUNCH_FAILED_" + code);
                 PluginCall c = pendingPurchaseCall;
                 pendingPurchaseCall = null;
                 c.resolve(err);
@@ -242,6 +286,11 @@ public class PlayBillingPlugin extends Plugin implements PurchasesUpdatedListene
             return;
         }
 
+        if (code == BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED) {
+            handleAlreadyOwned(call, sku, consumable);
+            return;
+        }
+
         if (code != BillingClient.BillingResponseCode.OK || purchases == null || purchases.isEmpty()) {
             JSObject res = new JSObject();
             res.put("purchased", false);
@@ -251,7 +300,10 @@ public class PlayBillingPlugin extends Plugin implements PurchasesUpdatedListene
             return;
         }
 
-        Purchase purchase = purchases.get(0);
+        processPurchase(call, sku, consumable, purchases.get(0));
+    }
+
+    private void processPurchase(PluginCall call, String sku, boolean consumable, Purchase purchase) {
         if (purchase.getPurchaseState() == Purchase.PurchaseState.PENDING) {
             JSObject res = new JSObject();
             res.put("purchased", false);
@@ -299,6 +351,44 @@ public class PlayBillingPlugin extends Plugin implements PurchasesUpdatedListene
         }
     }
 
+    private void handleAlreadyOwned(PluginCall call, String sku, boolean consumable) {
+        QueryPurchasesParams inappParams = QueryPurchasesParams.newBuilder()
+                .setProductType(BillingClient.ProductType.INAPP)
+                .build();
+        QueryPurchasesParams subParams = QueryPurchasesParams.newBuilder()
+                .setProductType(BillingClient.ProductType.SUBS)
+                .build();
+
+        billingClient.queryPurchasesAsync(inappParams, (r1, p1) -> {
+            Purchase match = findMatchingPurchase(p1, sku);
+            if (match != null) {
+                processPurchase(call, sku, consumable, match);
+                return;
+            }
+            billingClient.queryPurchasesAsync(subParams, (r2, p2) -> {
+                Purchase subMatch = findMatchingPurchase(p2, sku);
+                if (subMatch != null) {
+                    processPurchase(call, sku, false, subMatch);
+                } else {
+                    JSObject res = new JSObject();
+                    res.put("purchased", true);
+                    res.put("productId", sku);
+                    res.put("isSandbox", false);
+                    call.resolve(res);
+                }
+            });
+        });
+    }
+
+    @Nullable
+    private Purchase findMatchingPurchase(@Nullable List<Purchase> list, String sku) {
+        if (list == null) return null;
+        for (Purchase p : list) {
+            if (p.getProducts().contains(sku)) return p;
+        }
+        return null;
+    }
+
     @PluginMethod
     public void purchaseDebugSandbox(PluginCall call) {
         if (!BuildConfig.DEBUG) {
@@ -316,32 +406,34 @@ public class PlayBillingPlugin extends Plugin implements PurchasesUpdatedListene
 
     @PluginMethod
     public void restorePurchases(PluginCall call) {
-        if (!isConnected || !billingClient.isReady()) {
-            JSObject res = new JSObject();
-            res.put("ownedIds", new JSArray());
-            res.put("isDebugBuild", BuildConfig.DEBUG);
-            call.resolve(res);
-            return;
-        }
+        ensureConnected(
+                () -> {
+                    JSArray ownedIds = new JSArray();
+                    QueryPurchasesParams inappParams = QueryPurchasesParams.newBuilder()
+                            .setProductType(BillingClient.ProductType.INAPP)
+                            .build();
+                    QueryPurchasesParams subParams = QueryPurchasesParams.newBuilder()
+                            .setProductType(BillingClient.ProductType.SUBS)
+                            .build();
 
-        JSArray ownedIds = new JSArray();
-        QueryPurchasesParams inappParams = QueryPurchasesParams.newBuilder()
-                .setProductType(BillingClient.ProductType.INAPP)
-                .build();
-        QueryPurchasesParams subParams = QueryPurchasesParams.newBuilder()
-                .setProductType(BillingClient.ProductType.SUBS)
-                .build();
-
-        billingClient.queryPurchasesAsync(inappParams, (r1, p1) -> {
-            collectOwned(p1, ownedIds);
-            billingClient.queryPurchasesAsync(subParams, (r2, p2) -> {
-                collectOwned(p2, ownedIds);
-                JSObject res = new JSObject();
-                res.put("ownedIds", ownedIds);
-                res.put("isDebugBuild", BuildConfig.DEBUG);
-                call.resolve(res);
-            });
-        });
+                    billingClient.queryPurchasesAsync(inappParams, (r1, p1) -> {
+                        collectOwned(p1, ownedIds);
+                        billingClient.queryPurchasesAsync(subParams, (r2, p2) -> {
+                            collectOwned(p2, ownedIds);
+                            JSObject res = new JSObject();
+                            res.put("ownedIds", ownedIds);
+                            res.put("isDebugBuild", BuildConfig.DEBUG);
+                            call.resolve(res);
+                        });
+                    });
+                },
+                () -> {
+                    JSObject res = new JSObject();
+                    res.put("ownedIds", new JSArray());
+                    res.put("isDebugBuild", BuildConfig.DEBUG);
+                    call.resolve(res);
+                }
+        );
     }
 
     private void collectOwned(@Nullable List<Purchase> purchases, JSArray out) {

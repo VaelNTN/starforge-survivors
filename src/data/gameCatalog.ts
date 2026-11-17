@@ -382,6 +382,24 @@ export const CHAPTERS: ChapterDef[] = [
     rewardGems: 80,
     bossName: 'Omega Void Leviathan',
   },
+  {
+    id: 88,
+    name: '🔥 Boss Rush: Titan Gauntlet',
+    subtitle: '5 meedogenloze Bosses achter elkaar — enorme Gem & Blueprint buit!',
+    mode: 'boss_rush',
+    durationSec: 360,
+    recommendedPower: 380,
+    bgTop: '#1f0710',
+    bgBottom: '#330a1a',
+    gridColor: 'rgba(244, 63, 94, 0.12)',
+    accentColor: '#f43f5e',
+    enemyHpMult: 1.35,
+    enemyDmgMult: 1.25,
+    spawnRateMult: 0.55,
+    rewardCoins: 6500,
+    rewardGems: 130,
+    bossName: 'Titan Gauntlet (5 Bosses)',
+  },
 ];
 
 export const TALENTS: TalentNodeDef[] = [
@@ -627,4 +645,28 @@ export const LOGIN_STREAK_REWARDS = [
   { day: 5, label: '80 Gems', coins: 0, gems: 80, cyberKeys: 0 },
   { day: 6, label: '5.000 Gold', coins: 5000, gems: 0, cyberKeys: 0 },
   { day: 7, label: '200 Gems + Key', coins: 0, gems: 200, cyberKeys: 1 },
+];
+
+export interface WheelSliceDef {
+  id: string;
+  label: string;
+  color: string;
+  weight: number;
+  coins?: number;
+  gems?: number;
+  blueprints?: number;
+  cyberKeys?: number;
+  reviveTokens?: number;
+  isJackpot?: boolean;
+}
+
+export const WHEEL_REWARDS: WheelSliceDef[] = [
+  { id: 'w_gold_s', label: '1.500 Gold', color: '#334155', weight: 24, coins: 1500 },
+  { id: 'w_gems_40', label: '40 Gems', color: '#0284c7', weight: 20, gems: 40 },
+  { id: 'w_bp_15', label: '15 Blueprints', color: '#0d9488', weight: 18, blueprints: 15 },
+  { id: 'w_gold_l', label: '4.500 Gold', color: '#b45309', weight: 14, coins: 4500 },
+  { id: 'w_revive', label: '2x Revive Token', color: '#be123c', weight: 10, reviveTokens: 2 },
+  { id: 'w_key', label: '1x Cyber Key', color: '#7c3aed', weight: 8, cyberKeys: 1 },
+  { id: 'w_gems_120', label: '120 Gems', color: '#2563eb', weight: 4, gems: 120 },
+  { id: 'w_jackpot', label: '300 GEMS JACKPOT!', color: '#f59e0b', weight: 2, gems: 300, isJackpot: true },
 ];
