@@ -1,0 +1,23 @@
+{
+  "name": "starforge-survivors",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Starforge Survivors - Addictive Sci-Fi Action Roguelite RPG with Google Play Billing & AdMob",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "cap:sync": "npm run build && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.6.2",
+    "@capacitor/device": "^8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/cli": "^8.6.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}
