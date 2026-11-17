@@ -90,6 +90,7 @@ export function createDefaultSave(): PlayerSave {
     pityCounter: 0,
 
     selectedHero: 'kael',
+    selectedWeaponStyle: 'sword',
     unlockedHeroes: ['kael'],
     heroLevels: { kael: 1, nova: 1, titan: 1, vespera: 1 },
 
@@ -173,6 +174,10 @@ export function loadSave(): PlayerSave {
     const merged: PlayerSave = {
       ...base,
       ...parsed,
+      selectedWeaponStyle:
+        parsed.selectedWeaponStyle === 'staff' || parsed.selectedWeaponStyle === 'bow'
+          ? parsed.selectedWeaponStyle
+          : 'sword',
       heroLevels: { ...base.heroLevels, ...(parsed.heroLevels || {}) },
       equipped: { ...base.equipped, ...(parsed.equipped || {}) },
       talents: { ...(parsed.talents || {}) },

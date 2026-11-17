@@ -6,7 +6,45 @@ import {
   Rarity,
   TalentNodeDef,
   WeaponDef,
+  WeaponId,
+  WeaponStyle,
 } from '../types/game';
+
+export interface WeaponStyleDef {
+  id: WeaponStyle;
+  weaponId: WeaponId;
+  name: string;
+  icon: string;
+  subtitle: string;
+  color: string;
+}
+
+export const WEAPON_STYLES: WeaponStyleDef[] = [
+  {
+    id: 'sword',
+    weaponId: 'plasma_blade',
+    name: 'Zwaard',
+    icon: '⚔️',
+    subtitle: 'Krachtige zwaardslagen & terugduw',
+    color: '#38bdf8',
+  },
+  {
+    id: 'staff',
+    weaponId: 'arcane_staff',
+    name: 'Staf',
+    icon: '🪄',
+    subtitle: 'Magische energiebollen + explosie',
+    color: '#c084fc',
+  },
+  {
+    id: 'bow',
+    weaponId: 'star_bow',
+    name: 'Boog',
+    icon: '🏹',
+    subtitle: 'Snelle doorborende pijlen',
+    color: '#22c55e',
+  },
+];
 
 export const RARITY_ORDER: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
 
@@ -27,7 +65,7 @@ export const HEROES: HeroDef[] = [
     id: 'kael',
     name: 'Kael-7',
     title: 'Cyber Ronin',
-    description: 'Snelle plasma-zwaardvechter met dodelijke crit-kansen en bliksemsnelle dash.',
+    description: 'Snelle elite-krijger met dodelijke crit-kansen en bliksemsnelle dash.',
     startingWeapon: 'plasma_blade',
     ultName: 'Omnislash Nova',
     ultDesc: 'Ontketent een gigantische 360° plasma-schokgolf rondom je held.',
@@ -43,8 +81,8 @@ export const HEROES: HeroDef[] = [
     id: 'nova',
     name: 'Nova',
     title: 'Storm Weaver',
-    description: 'Beheerst bliksemketens en versnelt alle wapen-cooldowns.',
-    startingWeapon: 'tesla_arc',
+    description: 'Beheerst energiestormen en versnelt alle wapen-cooldowns.',
+    startingWeapon: 'arcane_staff',
     ultName: 'Ion Tempest',
     ultDesc: 'Laat 18 verwoestende bliksemstralen inslaan op vijanden in beeld.',
     accentColor: '#a855f7',
@@ -59,7 +97,7 @@ export const HEROES: HeroDef[] = [
     id: 'titan',
     name: 'Titan-X',
     title: 'Siege Juggernaut',
-    description: 'Zwaar gepantserde mech met enorme HP en verpletterende orbitals.',
+    description: 'Zwaar gepantserde strijder met enorme HP en pantser.',
     startingWeapon: 'orbital_saw',
     ultName: 'Orbital Fortress',
     ultDesc: 'Herstelt 40% HP & lanceert een vernietigende pulserende barrière.',
@@ -75,8 +113,8 @@ export const HEROES: HeroDef[] = [
     id: 'vespera',
     name: 'Vespera',
     title: 'Void Reaper',
-    description: 'Schaduwmoordenaar met levenszuigende zeisen en extreme schade.',
-    startingWeapon: 'vamp_scythe',
+    description: 'Schaduwjager met dodelijke precisie, hoge snelheid en life-steal.',
+    startingWeapon: 'star_bow',
     ultName: 'Eclipse Singularity',
     ultDesc: 'Trekt alle monsters naar binnen en snijdt ze aan stukken met Void-energie.',
     accentColor: '#f43f5e',
@@ -92,15 +130,39 @@ export const HEROES: HeroDef[] = [
 export const WEAPONS: WeaponDef[] = [
   {
     id: 'plasma_blade',
-    name: 'Plasma Katana',
-    shortDesc: 'Scherpe boogslagen vlak voor en achter je held.',
-    evoName: 'Hyper-Nova Blade',
+    name: 'Plasma Zwaard',
+    shortDesc: 'Scherpe zwaardslagen die monsters terugduwen.',
+    evoName: 'Hyper-Nova Zwaard',
     evoPassive: 'chrono_core',
-    evoDesc: '360° rode plasma-slagen bij elke aanval met extra reikwijdte!',
+    evoDesc: '360° rode plasma-slagen bij elke zwaai met enorme reikwijdte!',
     color: '#38bdf8',
     maxLevel: 5,
-    baseDamage: 34,
-    baseCooldownMs: 900,
+    baseDamage: 36,
+    baseCooldownMs: 850,
+  },
+  {
+    id: 'arcane_staff',
+    name: 'Sterren Staf',
+    shortDesc: 'Schiet magische energiebollen die ontploffen bij inslag.',
+    evoName: 'Aether Nova Staf',
+    evoPassive: 'overclock_chip',
+    evoDesc: 'Enorme paarse energie-explosies die ketting-schokgolven veroorzaken!',
+    color: '#c084fc',
+    maxLevel: 5,
+    baseDamage: 33,
+    baseCooldownMs: 880,
+  },
+  {
+    id: 'star_bow',
+    name: 'Energie Boog',
+    shortDesc: 'Vuurt razendsnelle doorborende lichtpijlen op monsters.',
+    evoName: 'Stormregen Boog',
+    evoPassive: 'eagle_optics',
+    evoDesc: 'Schiet 5 gouden stormpijlen tegelijk dwars door hele zwermen!',
+    color: '#22c55e',
+    maxLevel: 5,
+    baseDamage: 30,
+    baseCooldownMs: 680,
   },
   {
     id: 'pulse_rifle',

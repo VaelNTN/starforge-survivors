@@ -1,4 +1,4 @@
-import { HEROES, PASSIVES, WEAPONS } from '../data/gameCatalog';
+import { GEAR_TEMPLATES, HEROES, PASSIVES, WEAPONS, WEAPON_STYLES } from '../data/gameCatalog';
 import { audio } from '../services/audio';
 import {
   ActiveRunBoosters,
@@ -8,9 +8,9 @@ import {
   PassiveId,
   Rarity,
   WeaponId,
+  WeaponStyle,
 } from '../types/game';
 import { createGearItem } from '../storage/saveState';
-import { GEAR_TEMPLATES } from '../data/gameCatalog';
 
 export interface DraftOption {
   kind: 'weapon' | 'passive' | 'evo' | 'heal_coins';
@@ -35,6 +35,8 @@ export interface HudSnapshot {
   bossRushStage: number;
   kills: number;
   combo: number;
+  threatLevel: number;
+  enemyPowerPct: number;
   coins: number;
   gems: number;
   ultCharge: number; // 0..100
@@ -48,6 +50,8 @@ export interface HudSnapshot {
 interface Enemy {
   id: number;
   kind: 'swarmer' | 'dasher' | 'sentinel' | 'spitter' | 'splitter' | 'goblin' | 'elite' | 'boss';
+  tier: 0 | 1 | 2; // 0 = normaal, 1 = Versterkt, 2 = Apex Mutant
+  animSeed: number;
   x: number;
   y: number;
   vx: number;
@@ -81,6 +85,8 @@ interface Projectile {
   boomerang?: boolean;
   vampiric?: boolean;
   homing?: boolean;
+  isArrow?: boolean;
+  isMagicOrb?: boolean;
   hitIds: Set<number>;
 }
 
@@ -154,6 +160,7 @@ export interface EngineCallbacks {
   onLevelUp: (choices: DraftOption[]) => void;
   onChestJackpot: (rewards: DraftOption[], bonusCoins: number) => void;
   onBossBanner: (bossName: string) => void;
+  onWaveBanner: (message: string) => void;
   onDeathOffer: (canFreeAd: boolean) => void;
   onFinish: (result: {
     victory: boolean;
@@ -184,6 +191,7 @@ export class SurvivorEngine {
   private ctx: CanvasRenderingContext2D;
   private chapter: ChapterDef;
   private hero: HeroDef;
+  private weaponStyle: WeaponStyle;
   private stats: CombatStats;
   private boosters: ActiveRunBoosters;
   private damageNumbers: boolean;
@@ -201,6 +209,11 @@ export class SurvivorEngine {
   private px = 0;
   private py = 0;
   private facingAngle = 0;
+  private weaponAimAngle = 0;
+  private walkPhase = 0;
+  private isMoving = false;
+  private attackAnimTimer = 0;
+  private attackAnimDuration = 0.28;
   private hp: number;
   private level = 1;
   private xp = 0;
@@ -213,6 +226,8 @@ export class SurvivorEngine {
   private ultCharge = 35;
 
   private elapsedSec = 0;
+  private threatLevel = 1;
+  private lastSurgeSec = 0;
   private kills = 0;
   private comboCount = 0;
   private comboTimer = 0;
@@ -269,6 +284,7 @@ export class SurvivorEngine {
     canvas: HTMLCanvasElement,
     chapter: ChapterDef,
     heroId: HeroDef['id'],
+    weaponStyle: WeaponStyle,
     stats: CombatStats,
     damageNumbers: boolean,
     vibration: boolean,
@@ -281,6 +297,7 @@ export class SurvivorEngine {
     this.ctx = context;
     this.chapter = chapter;
     this.hero = HEROES.find((h) => h.id === heroId) || HEROES[0];
+    this.weaponStyle = weaponStyle;
     this.stats = boosters.overdriveAtk ? { ...stats, atk: Math.round(stats.atk * 1.25) } : stats;
     this.boosters = boosters;
     this.damageNumbers = damageNumbers;
@@ -289,10 +306,11 @@ export class SurvivorEngine {
 
     this.hp = this.stats.maxHp;
     this.revivesLeft = this.stats.revives;
-    this.weapons.set(this.hero.startingWeapon, { lv: 1, cd: 0.25, evolved: false });
+    const styleDef = WEAPON_STYLES.find((s) => s.id === weaponStyle) || WEAPON_STYLES[0];
+    this.weapons.set(styleDef.weaponId, { lv: 1, cd: 0.2, evolved: false });
 
     if (boosters.extraWeapon) {
-      const others = WEAPONS.filter((w) => w.id !== this.hero.startingWeapon);
+      const others = WEAPONS.filter((w) => w.id !== styleDef.weaponId);
       const bonusW = others[Math.floor(Math.random() * others.length)];
       if (bonusW) {
         this.weapons.set(bonusW.id, { lv: 1, cd: 0.35, evolved: false });
@@ -740,14 +758,40 @@ export class SurvivorEngine {
     return Math.round(base * (1 + lv * 0.35));
   }
 
+  private getEnemyPowerPct(): number {
+    const scale = (1 + this.elapsedSec * 0.022) * Math.pow(1.18, this.threatLevel - 1);
+    return Math.round(scale * 100);
+  }
+
   private update(dt: number): void {
     this.elapsedSec += dt;
     if (this.invulnTimer > 0) this.invulnTimer = Math.max(0, this.invulnTimer - dt);
     if (this.dashCd > 0) this.dashCd = Math.max(0, this.dashCd - dt);
+    if (this.attackAnimTimer > 0) this.attackAnimTimer = Math.max(0, this.attackAnimTimer - dt);
     if (this.screenShake > 0) this.screenShake = Math.max(0, this.screenShake - dt * 28);
     if (this.comboTimer > 0) {
       this.comboTimer -= dt;
       if (this.comboTimer <= 0) this.comboCount = 0;
+    }
+
+    // Progressive Threat / Wave Escalation every 25s
+    const computedThreat =
+      this.chapter.mode === 'boss_rush'
+        ? Math.max(1, this.bossRushStage + 1)
+        : Math.floor(this.elapsedSec / 25) + 1;
+    if (computedThreat > this.threatLevel) {
+      this.threatLevel = computedThreat;
+      const pct = this.getEnemyPowerPct();
+      this.cb.onWaveBanner(`⚠️ GOLF ${this.threatLevel}: Monsters zijn nu ${pct}% sterker & sneller!`);
+    }
+
+    if (
+      this.chapter.mode !== 'boss_rush' &&
+      this.elapsedSec >= 40 &&
+      this.elapsedSec - this.lastSurgeSec >= 45
+    ) {
+      this.lastSurgeSec = this.elapsedSec;
+      this.spawnHordeSurge();
     }
 
     if (this.checkPendingLevelUp()) return;
@@ -779,6 +823,8 @@ export class SurvivorEngine {
       this.dashTimer -= dt;
       this.px += this.dashVx * dt;
       this.py += this.dashVy * dt;
+      this.isMoving = true;
+      this.walkPhase += dt * 18;
       this.afterimages.push({ x: this.px, y: this.py, life: 0.2 });
     } else if (len > 0.04) {
       const spdMult = 1 + (this.passives.get('dark_matter') || 0) * 0.09;
@@ -786,6 +832,11 @@ export class SurvivorEngine {
       this.px += mx * spd * dt;
       this.py += my * spd * dt;
       this.facingAngle = Math.atan2(my, mx);
+      if (this.attackAnimTimer <= 0) this.weaponAimAngle = this.facingAngle;
+      this.isMoving = true;
+      this.walkPhase += dt * 13;
+    } else {
+      this.isMoving = false;
     }
 
     // Spawner logic
@@ -832,7 +883,7 @@ export class SurvivorEngine {
         if (this.bossRushCooldown <= 0) {
           this.bossRushStage += 1;
           const label = `Boss ${this.bossRushStage}/5: ${BOSS_RUSH_NAMES[this.bossRushStage - 1]}`;
-          this.spawnBoss(label, 0.72 + this.bossRushStage * 0.32);
+          this.spawnBoss(label, 0.72 + this.bossRushStage * 0.36);
         }
       }
     } else if (this.chapter.mode === 'chapter' && !this.bossSpawned && this.elapsedSec >= this.chapter.durationSec) {
@@ -841,7 +892,7 @@ export class SurvivorEngine {
       const minute = Math.floor(this.elapsedSec / 60);
       if (minute >= 1 && !this.eliteSpawnedMin.has(minute)) {
         this.eliteSpawnedMin.add(minute);
-        if (minute % 2 === 0) this.spawnBoss(`${this.chapter.bossName} Mk.${minute / 2}`, 1 + minute * 0.12);
+        if (minute % 2 === 0) this.spawnBoss(`${this.chapter.bossName} Mk.${minute / 2}`, 1 + minute * 0.16);
         else this.spawnEnemy('elite');
       }
     } else if (this.chapter.mode === 'chapter') {
@@ -859,21 +910,34 @@ export class SurvivorEngine {
     }
   }
 
+  private spawnHordeSurge(): void {
+    const surgeCount = Math.min(20, 8 + this.threatLevel * 2);
+    const baseAngle = Math.random() * Math.PI * 2;
+    const dist = Math.max(this.width, this.height) * 0.56 + 35;
+    for (let i = 0; i < surgeCount; i++) {
+      if (this.enemies.length >= 190) break;
+      const a = baseAngle + (i / surgeCount) * Math.PI * 1.4 - Math.PI * 0.7;
+      const kind: Enemy['kind'] = i % 4 === 0 ? 'dasher' : i % 5 === 0 ? 'sentinel' : 'swarmer';
+      this.spawnEnemy(kind, this.px + Math.cos(a) * dist, this.py + Math.sin(a) * dist);
+    }
+    this.cb.onWaveBanner(`💀 ZWERMAANVAL! (${surgeCount} woeste monsters!)`);
+  }
+
   private updateSpawner(dt: number): void {
-    const intensity = 1 + this.elapsedSec / 45;
-    const rate = (1.65 + intensity * 0.85) * this.chapter.spawnRateMult;
+    const intensity = 1 + this.elapsedSec / 34 + (this.threatLevel - 1) * 0.32;
+    const rate = (1.75 + intensity * 0.95) * this.chapter.spawnRateMult;
     this.spawnAccum += dt * rate;
     const goblinChance = this.boosters.doubleLuck ? 0.05 : 0.025;
 
-    while (this.spawnAccum >= 1 && this.enemies.length < 155) {
+    while (this.spawnAccum >= 1 && this.enemies.length < 185) {
       this.spawnAccum -= 1;
       const r = Math.random();
       let kind: Enemy['kind'] = 'swarmer';
       if (r < goblinChance) kind = 'goblin';
-      else if (this.elapsedSec > 90 && r < 0.14) kind = 'splitter';
-      else if (this.elapsedSec > 55 && r < 0.28) kind = 'spitter';
-      else if (this.elapsedSec > 30 && r < 0.48) kind = 'sentinel';
-      else if (this.elapsedSec > 15 && r < 0.7) kind = 'dasher';
+      else if (this.elapsedSec > 75 && r < 0.15) kind = 'splitter';
+      else if (this.elapsedSec > 45 && r < 0.3) kind = 'spitter';
+      else if (this.elapsedSec > 25 && r < 0.5) kind = 'sentinel';
+      else if (this.elapsedSec > 12 && r < 0.72) kind = 'dasher';
       this.spawnEnemy(kind);
     }
   }
@@ -884,75 +948,104 @@ export class SurvivorEngine {
     const x = customX ?? this.px + Math.cos(angle) * spawnDist;
     const y = customY ?? this.py + Math.sin(angle) * spawnDist;
 
-    const timeScale = 1 + this.elapsedSec * 0.014;
-    const hpBase = 34 * this.chapter.enemyHpMult * timeScale;
-    const dmgBase = 14 * this.chapter.enemyDmgMult * (1 + this.elapsedSec * 0.004);
+    // Strong progressive scaling across HP, Damage AND Speed
+    const threatPowHp = Math.pow(1.18, this.threatLevel - 1);
+    const threatPowDmg = Math.pow(1.13, this.threatLevel - 1);
+    const spdScale = 1 + Math.min(0.85, (this.threatLevel - 1) * 0.09);
 
-    let radius = 13;
+    const hpBase = 34 * this.chapter.enemyHpMult * (1 + this.elapsedSec * 0.024) * threatPowHp;
+    const dmgBase = 14 * this.chapter.enemyDmgMult * (1 + this.elapsedSec * 0.014) * threatPowDmg;
+
+    let radius = 14;
     let hp = hpBase;
-    let speed = 78;
+    let speed = 82 * spdScale;
     let damage = dmgBase;
     let color = '#fb7185';
     let xpValue = 4;
 
     if (kind === 'dasher') {
-      radius = 11;
-      hp = hpBase * 0.72;
-      speed = 128;
+      radius = 12;
+      hp = hpBase * 0.78;
+      speed = 132 * spdScale;
       color = '#f97316';
       xpValue = 5;
     } else if (kind === 'sentinel') {
-      radius = 18;
-      hp = hpBase * 2.5;
-      speed = 54;
-      damage = dmgBase * 1.35;
+      radius = 20;
+      hp = hpBase * 2.7;
+      speed = 58 * spdScale;
+      damage = dmgBase * 1.4;
       color = '#94a3b8';
-      xpValue = 10;
+      xpValue = 11;
     } else if (kind === 'spitter') {
-      radius = 14;
-      hp = hpBase * 1.1;
-      speed = 68;
+      radius = 15;
+      hp = hpBase * 1.2;
+      speed = 72 * spdScale;
       color = '#a3e635';
-      xpValue = 8;
-    } else if (kind === 'splitter') {
-      radius = 17;
-      hp = hpBase * 1.7;
-      speed = 70;
-      color = '#c084fc';
       xpValue = 9;
+    } else if (kind === 'splitter') {
+      radius = 18;
+      hp = hpBase * 1.85;
+      speed = 75 * spdScale;
+      color = '#c084fc';
+      xpValue = 10;
     } else if (kind === 'goblin') {
-      radius = 14;
+      radius = 15;
       hp = hpBase * 1.9;
-      speed = 115;
+      speed = 118 * Math.min(1.4, spdScale);
       damage = 4;
       color = '#fbbf24';
-      xpValue = 16;
+      xpValue = 18;
     } else if (kind === 'elite') {
-      radius = 27;
-      hp = hpBase * 14;
-      speed = 74;
-      damage = dmgBase * 1.75;
+      radius = 29;
+      hp = hpBase * 15;
+      speed = 80 * spdScale;
+      damage = dmgBase * 1.85;
       color = '#e879f9';
-      xpValue = 45;
+      xpValue = 50;
     } else if (kind === 'boss') {
-      radius = 40;
-      hp = hpBase * 42;
-      speed = 82;
-      damage = dmgBase * 2.2;
+      radius = 44;
+      hp = hpBase * 44;
+      speed = 86 * Math.min(1.45, spdScale);
+      damage = dmgBase * 2.3;
       color = '#ef4444';
-      xpValue = 120;
+      xpValue = 140;
+    }
+
+    // Monster Mutation / Strength Tiers as waves progress
+    let tier: 0 | 1 | 2 = 0;
+    if (kind !== 'boss' && kind !== 'elite' && kind !== 'goblin') {
+      const apexChance = this.threatLevel >= 3 ? Math.min(0.24, (this.threatLevel - 2) * 0.06) : 0;
+      const strongChance = this.threatLevel >= 2 ? Math.min(0.42, (this.threatLevel - 1) * 0.12) : 0;
+      const roll = Math.random();
+      if (roll < apexChance) {
+        tier = 2; // Apex Mutant
+        radius = Math.round(radius * 1.3);
+        hp *= 2.55;
+        damage *= 1.65;
+        speed *= 1.22;
+        xpValue = Math.round(xpValue * 2.2);
+      } else if (roll < apexChance + strongChance) {
+        tier = 1; // Versterkt Monster
+        radius = Math.round(radius * 1.15);
+        hp *= 1.65;
+        damage *= 1.3;
+        speed *= 1.12;
+        xpValue = Math.round(xpValue * 1.5);
+      }
     }
 
     const enemy: Enemy = {
       id: this.nextEnemyId++,
       kind,
+      tier,
+      animSeed: Math.random() * Math.PI * 2,
       x,
       y,
       vx: 0,
       vy: 0,
       radius,
-      hp,
-      maxHp: hp,
+      hp: Math.round(hp),
+      maxHp: Math.round(hp),
       speed,
       damage,
       color,
@@ -1032,15 +1125,22 @@ export class SurvivorEngine {
       const def = WEAPONS.find((w) => w.id === wId);
       if (!def) continue;
 
-      const baseCd = (def.baseCooldownMs / 1000) * Math.max(0.55, 1 - (st.lv - 1) * 0.08) * cdMult;
+      const baseCd = (def.baseCooldownMs / 1000) * Math.max(0.52, 1 - (st.lv - 1) * 0.08) * cdMult;
       st.cd = st.evolved ? baseCd * 0.72 : baseCd;
       const dmg = (this.stats.atk + def.baseDamage) * (1 + (st.lv - 1) * 0.34) * dmgMult * (st.evolved ? 1.65 : 1);
 
       if (wId === 'plasma_blade') {
-        const radius = (st.evolved ? 148 : 96 + st.lv * 10) * areaMult;
-        const spread = st.evolved ? Math.PI * 2 : Math.PI * 0.85;
+        const radius = (st.evolved ? 155 : 104 + st.lv * 10) * areaMult;
+        const spread = st.evolved ? Math.PI * 2 : Math.PI * 0.9;
         const hitsBothSides = st.lv >= 3 || st.evolved;
-        const angles = hitsBothSides && !st.evolved ? [this.facingAngle, this.facingAngle + Math.PI] : [this.facingAngle];
+        const target = this.findNearestEnemy(radius + 50);
+        const swingAng = target ? Math.atan2(target.y - this.py, target.x - this.px) : this.facingAngle;
+        if (this.weaponStyle === 'sword') {
+          this.weaponAimAngle = swingAng;
+          this.attackAnimDuration = 0.28;
+          this.attackAnimTimer = 0.28;
+        }
+        const angles = hitsBothSides && !st.evolved ? [swingAng, swingAng + Math.PI] : [swingAng];
         for (const ang of angles) {
           this.slashes.push({
             x: this.px,
@@ -1057,16 +1157,78 @@ export class SurvivorEngine {
             const dy = e.y - this.py;
             const dist = Math.hypot(dx, dy);
             if (dist <= radius + e.radius) {
-              if (st.evolved) {
+              const hit =
+                st.evolved ||
+                Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - ang), Math.cos(Math.atan2(dy, dx) - ang))) <=
+                  spread / 2 + 0.28;
+              if (hit) {
                 this.damageEnemy(e, dmg, false);
-              } else {
-                const diff = Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - ang), Math.cos(Math.atan2(dy, dx) - ang)));
-                if (diff <= spread / 2 + 0.25) {
-                  this.damageEnemy(e, dmg, false);
+                if (e.kind !== 'boss' && dist > 1) {
+                  e.x += (dx / dist) * 14;
+                  e.y += (dy / dist) * 14;
                 }
               }
             }
           }
+        }
+      } else if (wId === 'arcane_staff') {
+        const target = this.findNearestEnemy(500);
+        const baseAng = target ? Math.atan2(target.y - this.py, target.x - this.px) : this.facingAngle;
+        if (this.weaponStyle === 'staff') {
+          this.weaponAimAngle = baseAng;
+          this.attackAnimDuration = 0.26;
+          this.attackAnimTimer = 0.26;
+        }
+        const count = (st.evolved ? 4 : 1 + Math.floor(st.lv / 2)) + extraProj;
+        for (let i = 0; i < count; i++) {
+          const offset = (i - (count - 1) / 2) * 0.22;
+          const a = baseAng + offset;
+          this.projectiles.push({
+            fromEnemy: false,
+            x: this.px + Math.cos(baseAng) * 18,
+            y: this.py + Math.sin(baseAng) * 18,
+            vx: Math.cos(a) * (st.evolved ? 480 : 390),
+            vy: Math.sin(a) * (st.evolved ? 480 : 390),
+            radius: st.evolved ? 11 : 8,
+            damage: dmg,
+            pierce: st.evolved ? 2 : 1,
+            life: 1.75,
+            maxLife: 1.75,
+            color: st.evolved ? '#f0abfc' : '#c084fc',
+            explosive: true,
+            homing: st.evolved || st.lv >= 4,
+            isMagicOrb: true,
+            hitIds: new Set(),
+          });
+        }
+      } else if (wId === 'star_bow') {
+        const target = this.findNearestEnemy(560);
+        const baseAng = target ? Math.atan2(target.y - this.py, target.x - this.px) : this.facingAngle;
+        if (this.weaponStyle === 'bow') {
+          this.weaponAimAngle = baseAng;
+          this.attackAnimDuration = 0.22;
+          this.attackAnimTimer = 0.22;
+        }
+        const count = (st.evolved ? 5 : 1 + Math.floor(st.lv / 2)) + extraProj;
+        for (let i = 0; i < count; i++) {
+          const offset = (i - (count - 1) / 2) * 0.11;
+          const a = baseAng + offset;
+          const speed = st.evolved ? 820 : 680;
+          this.projectiles.push({
+            fromEnemy: false,
+            x: this.px + Math.cos(a) * 16,
+            y: this.py + Math.sin(a) * 16,
+            vx: Math.cos(a) * speed,
+            vy: Math.sin(a) * speed,
+            radius: st.evolved ? 7 : 5,
+            damage: dmg,
+            pierce: st.evolved ? 8 : 2 + st.lv,
+            life: 1.3,
+            maxLife: 1.3,
+            color: st.evolved ? '#fbbf24' : '#4ade80',
+            isArrow: true,
+            hitIds: new Set(),
+          });
         }
       } else if (wId === 'pulse_rifle') {
         const target = this.findNearestEnemy(480);
@@ -1658,6 +1820,8 @@ export class SurvivorEngine {
       bossRushStage: this.bossRushStage,
       kills: this.kills,
       combo: this.comboCount,
+      threatLevel: this.threatLevel,
+      enemyPowerPct: this.getEnemyPowerPct(),
       coins: Math.round(this.coinsEarned * this.stats.goldMult * (this.boosters.doubleLuck ? 1.25 : 1)),
       gems: this.gemsEarned,
       ultCharge: Math.round(this.ultCharge),
@@ -1826,119 +1990,18 @@ export class SurvivorEngine {
     // Dash afterimages
     for (const a of this.afterimages) {
       ctx.save();
-      ctx.globalAlpha = a.life * 2.5;
+      ctx.globalAlpha = a.life * 2.2;
       ctx.fillStyle = this.hero.accentColor;
       ctx.beginPath();
-      ctx.arc(a.x, a.y, 14, 0, Math.PI * 2);
+      ctx.roundRect(a.x - 8, a.y - 16, 16, 26, 6);
       ctx.fill();
       ctx.restore();
     }
 
-    // Enemies (distinct sci-fi procedural silhouettes)
+    // Enemies (detailed animated monsters)
     for (const e of this.enemies) {
       if (Math.abs(e.x - this.px) > w * 0.72 || Math.abs(e.y - this.py) > h * 0.72) continue;
-      const fill = e.hitFlash > 0 ? '#ffffff' : e.slowTimer > 0 ? '#60a5fa' : e.color;
-      const ang = Math.atan2(this.py - e.y, this.px - e.x);
-
-      ctx.save();
-      ctx.translate(e.x, e.y);
-
-      if (e.kind === 'boss') {
-        ctx.rotate(this.elapsedSec * 0.6);
-        ctx.fillStyle = fill;
-        ctx.strokeStyle = '#fef08a';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        for (let i = 0; i < 8; i++) {
-          const a = (i * Math.PI * 2) / 8;
-          const rad = i % 2 === 0 ? e.radius * 1.15 : e.radius * 0.85;
-          if (i === 0) ctx.moveTo(Math.cos(a) * rad, Math.sin(a) * rad);
-          else ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = '#0f172a';
-        ctx.beginPath();
-        ctx.arc(0, 0, e.radius * 0.4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#fef08a';
-        ctx.beginPath();
-        ctx.arc(0, 0, e.radius * 0.2, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (e.kind === 'elite') {
-        ctx.rotate(ang);
-        ctx.fillStyle = fill;
-        ctx.strokeStyle = '#fef08a';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        for (let i = 0; i < 6; i++) {
-          const a = (i * Math.PI * 2) / 6;
-          if (i === 0) ctx.moveTo(Math.cos(a) * e.radius, Math.sin(a) * e.radius);
-          else ctx.lineTo(Math.cos(a) * e.radius, Math.sin(a) * e.radius);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.arc(e.radius * 0.35, 0, 5, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (e.kind === 'sentinel') {
-        ctx.rotate(ang);
-        ctx.fillStyle = fill;
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.lineWidth = 2;
-        ctx.fillRect(-e.radius, -e.radius, e.radius * 2, e.radius * 2);
-        ctx.strokeRect(-e.radius, -e.radius, e.radius * 2, e.radius * 2);
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(e.radius * 0.3, -5, 6, 10);
-      } else if (e.kind === 'dasher' || e.kind === 'swarmer') {
-        ctx.rotate(ang);
-        ctx.fillStyle = fill;
-        ctx.beginPath();
-        ctx.moveTo(e.radius * 1.2, 0);
-        ctx.lineTo(-e.radius * 0.85, e.radius * 0.85);
-        ctx.lineTo(-e.radius * 0.45, 0);
-        ctx.lineTo(-e.radius * 0.85, -e.radius * 0.85);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = '#0f172a';
-        ctx.beginPath();
-        ctx.arc(e.radius * 0.25, 0, 3, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (e.kind === 'goblin') {
-        ctx.fillStyle = fill;
-        ctx.strokeStyle = '#fef08a';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('$', 0, 4);
-      } else {
-        ctx.fillStyle = fill;
-        ctx.beginPath();
-        ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-      ctx.restore();
-
-      // Compact HP bar for Boss/Elite/Sentinel when damaged
-      if (e.kind === 'boss' || e.kind === 'elite' || (e.kind === 'sentinel' && e.hp < e.maxHp)) {
-        const bw = e.radius * 2.2;
-        const frac = Math.max(0, Math.min(1, e.hp / e.maxHp));
-        ctx.fillStyle = 'rgba(0,0,0,0.65)';
-        ctx.fillRect(e.x - bw / 2, e.y + e.radius + 5, bw, 4);
-        ctx.fillStyle = e.kind === 'boss' ? '#ef4444' : '#f59e0b';
-        ctx.fillRect(e.x - bw / 2, e.y + e.radius + 5, bw * frac, 4);
-      }
+      this.drawMonster(ctx, e);
     }
 
     // Orbitals render (toothed spinning saw blades)
@@ -2039,6 +2102,55 @@ export class SurvivorEngine {
         ctx.beginPath();
         ctx.arc(0, 0, p.radius, -Math.PI * 0.7, Math.PI * 0.7);
         ctx.stroke();
+      } else if (p.isArrow) {
+        const ang = Math.atan2(p.vy, p.vx);
+        ctx.rotate(ang);
+        // Arrow glow
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 10;
+        // Shaft
+        ctx.strokeStyle = '#fef3c7';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.moveTo(-13, 0);
+        ctx.lineTo(9, 0);
+        ctx.stroke();
+        // Fletching feathers
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.moveTo(-13, 0);
+        ctx.lineTo(-17, -4);
+        ctx.lineTo(-9, 0);
+        ctx.lineTo(-17, 4);
+        ctx.closePath();
+        ctx.fill();
+        // Arrowhead
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.moveTo(15, 0);
+        ctx.lineTo(6, -4.5);
+        ctx.lineTo(8, 0);
+        ctx.lineTo(6, 4.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      } else if (p.isMagicOrb) {
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 14;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius * 0.45, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius * 1.3, this.elapsedSec * 6, this.elapsedSec * 6 + Math.PI);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
       } else if (!p.fromEnemy) {
         const ang = Math.atan2(p.vy, p.vx);
         ctx.rotate(ang);
@@ -2067,55 +2179,8 @@ export class SurvivorEngine {
       ctx.restore();
     }
 
-    // Player Hero
-    ctx.save();
-    if (this.invulnTimer > 0 && Math.floor(this.invulnTimer * 20) % 2 === 0) {
-      ctx.globalAlpha = 0.55;
-    }
-    // Pickup Magnet subtle halo
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.14)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(this.px, this.py, this.getPickupRadius(), 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Hero Body + Shoulder Silhouette + Glow
-    ctx.save();
-    ctx.translate(this.px, this.py);
-    ctx.rotate(this.facingAngle);
-    ctx.shadowColor = this.hero.accentColor;
-    ctx.shadowBlur = 16;
-    ctx.fillStyle = this.hero.secondaryColor;
-    ctx.beginPath();
-    ctx.roundRect(-12, -16, 18, 32, 6);
-    ctx.fill();
-    ctx.fillStyle = this.hero.accentColor;
-    ctx.beginPath();
-    ctx.arc(0, 0, 14, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2.2;
-    ctx.stroke();
-
-    // Facing visor
-    ctx.fillStyle = '#0f172a';
-    ctx.beginPath();
-    ctx.roundRect(4, -7, 8, 14, 3);
-    ctx.fill();
-    ctx.fillStyle = '#e0f2fe';
-    ctx.fillRect(7, -5, 3, 10);
-    ctx.restore();
-
-    // Small overhead HP bar
-    const barW = 36;
-    const hpFrac = Math.max(0, Math.min(1, this.hp / this.getEffectiveMaxHp()));
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(this.px - barW / 2, this.py + 22, barW, 5);
-    ctx.fillStyle = hpFrac > 0.35 ? '#10b981' : '#ef4444';
-    ctx.fillRect(this.px - barW / 2, this.py + 22, barW * hpFrac, 5);
-    ctx.restore();
+    // Player Hero (Full animated character with Sword / Staff / Bow)
+    this.drawPlayerCharacter(ctx);
 
     // Floating Damage Numbers
     for (const f of this.floats) {
@@ -2185,6 +2250,618 @@ export class SurvivorEngine {
       ctx.arc(this.touchStartX + this.joyX * 44, this.touchStartY + this.joyY * 44, 20, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
+    }
+  }
+
+  private drawPlayerCharacter(ctx: CanvasRenderingContext2D): void {
+    ctx.save();
+    if (this.invulnTimer > 0 && Math.floor(this.invulnTimer * 20) % 2 === 0) {
+      ctx.globalAlpha = 0.55;
+    }
+
+    // Pickup Magnet subtle halo
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.14)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(this.px, this.py, this.getPickupRadius(), 0, Math.PI * 2);
+    ctx.stroke();
+
+    const dirX = Math.cos(this.weaponAimAngle) >= 0 ? 1 : -1;
+    const walkSwing = this.isMoving ? Math.sin(this.walkPhase) * 6 : 0;
+    const bob = this.isMoving ? Math.abs(Math.sin(this.walkPhase)) * 3 : Math.sin(this.elapsedSec * 3.2) * 0.9;
+
+    ctx.save();
+    ctx.translate(this.px, this.py);
+
+    // Grondschaduw onder de voeten
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.48)';
+    ctx.beginPath();
+    ctx.ellipse(0, 19, 14, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Subtiele heldengloed
+    ctx.shadowColor = this.hero.accentColor;
+    ctx.shadowBlur = 12;
+
+    // Wapperende cape aan de achterkant
+    const capeWave = this.isMoving ? Math.sin(this.walkPhase * 1.1) * 4 : Math.sin(this.elapsedSec * 2.5) * 1.5;
+    ctx.fillStyle = this.hero.secondaryColor;
+    ctx.beginPath();
+    ctx.moveTo(-4 * dirX, -6 - bob);
+    ctx.lineTo(-15 * dirX + capeWave * 0.4, 15 - bob * 0.5);
+    ctx.lineTo(3 * dirX, 14 - bob * 0.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Benen & Laarzen (echt stappend bij lopen)
+    const drawBoot = (xOff: number, swing: number) => {
+      ctx.fillStyle = '#0f172a';
+      ctx.strokeStyle = this.hero.accentColor;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.roundRect(xOff - 3.5, 8 + swing * 0.55 - bob * 0.3, 7, 10, 3);
+      ctx.fill();
+      ctx.stroke();
+      // Laars-punt
+      ctx.fillStyle = this.hero.secondaryColor;
+      ctx.fillRect(xOff - 3 + dirX * 1.5, 14 + swing * 0.55 - bob * 0.3, 6, 4);
+    };
+    drawBoot(-5, walkSwing);
+    drawBoot(5, -walkSwing);
+
+    // Lichaam / Pantser-torso
+    ctx.fillStyle = this.hero.secondaryColor;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.roundRect(-10, -7 - bob, 20, 17, 5);
+    ctx.fill();
+    ctx.stroke();
+
+    // Borstplaat & Energie-riem
+    ctx.fillStyle = this.hero.accentColor;
+    ctx.beginPath();
+    ctx.roundRect(-7, -5 - bob, 14, 9, 3);
+    ctx.fill();
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(-9, 5 - bob, 18, 3);
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(-2, 4.5 - bob, 4, 4);
+
+    // Schouderplaten
+    ctx.fillStyle = this.hero.accentColor;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(-10, -4 - bob, 4.2, 0, Math.PI * 2);
+    ctx.arc(10, -4 - bob, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Achterste arm (vrije hand)
+    ctx.fillStyle = this.hero.secondaryColor;
+    ctx.beginPath();
+    ctx.arc(-11 * dirX, 2 - bob - walkSwing * 0.35, 3.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Hoofd & Helm / Haar
+    const headY = -14 - bob;
+    ctx.fillStyle = '#0f172a';
+    ctx.strokeStyle = this.hero.accentColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, headY, 9.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Held-specifiek helm-detail / crest
+    ctx.fillStyle = this.hero.accentColor;
+    if (this.hero.id === 'kael') {
+      // Ninja hoofdband + pluim
+      ctx.beginPath();
+      ctx.moveTo(-8 * dirX, headY - 4);
+      ctx.lineTo(-16 * dirX - capeWave * 0.5, headY - 8);
+      ctx.lineTo(-13 * dirX, headY - 1);
+      ctx.closePath();
+      ctx.fill();
+    } else if (this.hero.id === 'nova') {
+      // Magiërs-kroon / punthoed rand
+      ctx.beginPath();
+      ctx.moveTo(-7, headY - 7);
+      ctx.lineTo(0, headY - 16);
+      ctx.lineTo(7, headY - 7);
+      ctx.closePath();
+      ctx.fill();
+    } else if (this.hero.id === 'titan') {
+      // Zware helm-plaat
+      ctx.fillRect(-7, headY - 11, 14, 4);
+    } else {
+      // Vespera schaduw-hoorns
+      ctx.beginPath();
+      ctx.moveTo(-8, headY - 5);
+      ctx.lineTo(-11, headY - 14);
+      ctx.lineTo(-3, headY - 8);
+      ctx.moveTo(8, headY - 5);
+      ctx.lineTo(11, headY - 14);
+      ctx.lineTo(3, headY - 8);
+      ctx.fill();
+    }
+
+    // Gezicht / Vizier met 2 sprekende ogen
+    ctx.fillStyle = '#e0f2fe';
+    ctx.beginPath();
+    ctx.roundRect(dirX * 2 - 6, headY - 3, 12, 5.5, 2.5);
+    ctx.fill();
+    ctx.fillStyle = this.hero.secondaryColor;
+    ctx.beginPath();
+    ctx.arc(dirX * 2 - 2.5, headY - 0.2, 1.5, 0, Math.PI * 2);
+    ctx.arc(dirX * 2 + 2.5, headY - 0.2, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Wapen in voorste hand (Zwaard / Staf / Boog)
+    const atkFrac = this.attackAnimTimer > 0 ? 1 - this.attackAnimTimer / Math.max(0.01, this.attackAnimDuration) : 0;
+    ctx.save();
+    ctx.translate(dirX * 5, -1 - bob);
+
+    if (this.weaponStyle === 'sword') {
+      const swingOffset = this.attackAnimTimer > 0 ? -1.35 + atkFrac * 2.7 : -0.35 * dirX;
+      ctx.rotate(this.weaponAimAngle + swingOffset);
+      // Hand om gevest
+      ctx.fillStyle = '#fde68a';
+      ctx.beginPath();
+      ctx.arc(10, 0, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+      // Gevest & gouden pareerstang
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(6, -1.8, 7, 3.6);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(12, -6.5, 3, 13);
+      // Groot scherp Zwaard-lemmet
+      ctx.shadowColor = '#38bdf8';
+      ctx.shadowBlur = this.attackAnimTimer > 0 ? 14 : 6;
+      ctx.fillStyle = '#e0f2fe';
+      ctx.beginPath();
+      ctx.moveTo(15, -3.2);
+      ctx.lineTo(38, -2);
+      ctx.lineTo(43, 0);
+      ctx.lineTo(38, 2);
+      ctx.lineTo(15, 3.2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    } else if (this.weaponStyle === 'staff') {
+      const thrust = this.attackAnimTimer > 0 ? Math.sin(atkFrac * Math.PI) * 8 : 0;
+      ctx.rotate(this.weaponAimAngle);
+      ctx.translate(thrust, 0);
+      // Hand op staf
+      ctx.fillStyle = '#fde68a';
+      ctx.beginPath();
+      ctx.arc(10, 0, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+      // Staf schacht
+      ctx.fillStyle = '#92400e';
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 1;
+      ctx.fillRect(-6, -2, 34, 4);
+      ctx.strokeRect(-6, -2, 34, 4);
+      // Gouden houder
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath();
+      ctx.moveTo(27, -5);
+      ctx.lineTo(33, -7);
+      ctx.lineTo(31, 0);
+      ctx.lineTo(33, 7);
+      ctx.lineTo(27, 5);
+      ctx.closePath();
+      ctx.fill();
+      // Magische energie-orb bovenop staf
+      const orbPulse = 6.2 + Math.sin(this.elapsedSec * 9) * 1.1 + (this.attackAnimTimer > 0 ? 2.5 : 0);
+      ctx.shadowColor = '#c084fc';
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = '#c084fc';
+      ctx.beginPath();
+      ctx.arc(34, 0, orbPulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(33, -1.5, orbPulse * 0.42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    } else {
+      // Boog
+      const drawPull = this.attackAnimTimer > 0 ? Math.sin(atkFrac * Math.PI) * 6 : 2;
+      ctx.rotate(this.weaponAimAngle);
+      // Hand op boog-greep
+      ctx.fillStyle = '#fde68a';
+      ctx.beginPath();
+      ctx.arc(13, 0, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      // Gebogen boog-latten
+      ctx.shadowColor = '#22c55e';
+      ctx.shadowBlur = 8;
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 3.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(8, -16);
+      ctx.quadraticCurveTo(21, 0, 8, 16);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      // Pees (gespannen naar achter bij schieten)
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(8, -15);
+      ctx.lineTo(6 - drawPull, 0);
+      ctx.lineTo(8, 15);
+      ctx.stroke();
+      // Pijl klaar op de pees
+      if (this.attackAnimTimer <= 0.12) {
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(6 - drawPull, 0);
+        ctx.lineTo(25 - drawPull * 0.5, 0);
+        ctx.stroke();
+        ctx.fillStyle = '#4ade80';
+        ctx.beginPath();
+        ctx.moveTo(29 - drawPull * 0.5, 0);
+        ctx.lineTo(22 - drawPull * 0.5, -3);
+        ctx.lineTo(22 - drawPull * 0.5, 3);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+
+    ctx.restore();
+
+    // Overhead / Under-foot HP bar
+    const barW = 36;
+    const hpFrac = Math.max(0, Math.min(1, this.hp / this.getEffectiveMaxHp()));
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(this.px - barW / 2, this.py + 25, barW, 5);
+    ctx.fillStyle = hpFrac > 0.35 ? '#10b981' : '#ef4444';
+    ctx.fillRect(this.px - barW / 2, this.py + 25, barW * hpFrac, 5);
+    ctx.restore();
+  }
+
+  private drawMonster(ctx: CanvasRenderingContext2D, e: Enemy): void {
+    const fill = e.hitFlash > 0 ? '#ffffff' : e.slowTimer > 0 ? '#60a5fa' : e.color;
+    const face = this.px >= e.x ? 1 : -1;
+    const waggle = Math.sin(this.elapsedSec * 9 + e.animSeed);
+    const hop = Math.abs(waggle) * 2.2;
+    const r = e.radius;
+
+    ctx.save();
+    ctx.translate(e.x, e.y);
+
+    // Grondschaduw
+    ctx.fillStyle = 'rgba(0,0,0,0.42)';
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.85, r * 0.88, r * 0.36, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Mutant / Versterkt Monster Aura
+    if (e.tier >= 1) {
+      ctx.save();
+      ctx.strokeStyle = e.tier === 2 ? '#ef4444' : '#f59e0b';
+      ctx.lineWidth = e.tier === 2 ? 2.6 : 1.8;
+      ctx.globalAlpha = 0.72 + Math.sin(this.elapsedSec * 7 + e.animSeed) * 0.25;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 1.18, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.translate(0, -hop);
+
+    if (e.kind === 'boss') {
+      // Kolossaal Eindbaas-Monster met klauwen, grote hoorns, tanden & energiekern
+      const flap = Math.sin(this.elapsedSec * 5 + e.animSeed) * 8;
+      // Vleugels / Klauwarmen
+      ctx.fillStyle = '#7f1d1d';
+      ctx.strokeStyle = '#fef08a';
+      ctx.lineWidth = 2.5;
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(side * r * 0.5, -r * 0.1);
+        ctx.lineTo(side * r * 1.45, -r * 0.65 + flap);
+        ctx.lineTo(side * r * 1.25, r * 0.2 + flap * 0.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      // Hoofdlichaam
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = '#fef08a';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Grote Gebogen Hoorns
+      ctx.fillStyle = '#fde047';
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(side * r * 0.35, -r * 0.7);
+        ctx.lineTo(side * r * 0.9, -r * 1.35);
+        ctx.lineTo(side * r * 0.62, -r * 0.55);
+        ctx.closePath();
+        ctx.fill();
+      }
+      // 3 Woeste gloeiende ogen
+      ctx.fillStyle = '#fef08a';
+      ctx.beginPath();
+      ctx.arc(-r * 0.32, -r * 0.18, r * 0.14, 0, Math.PI * 2);
+      ctx.arc(r * 0.32, -r * 0.18, r * 0.14, 0, Math.PI * 2);
+      ctx.arc(0, -r * 0.38, r * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+      // Open tandenbek
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.roundRect(-r * 0.48, r * 0.16, r * 0.96, r * 0.38, 6);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      for (let t = -3; t <= 3; t++) {
+        ctx.beginPath();
+        ctx.moveTo(t * r * 0.12 - 3, r * 0.16);
+        ctx.lineTo(t * r * 0.12, r * 0.34);
+        ctx.lineTo(t * r * 0.12 + 3, r * 0.16);
+        ctx.fill();
+      }
+    } else if (e.kind === 'elite') {
+      // Demon-Ridder met grote hoorns & klauwen
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = '#fef08a';
+      ctx.lineWidth = 2.4;
+      // Klauwen
+      ctx.beginPath();
+      ctx.arc(-r * 0.85, waggle * 3, r * 0.32, 0, Math.PI * 2);
+      ctx.arc(r * 0.85, -waggle * 3, r * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+      // Lijf
+      ctx.beginPath();
+      ctx.roundRect(-r * 0.8, -r * 0.78, r * 1.6, r * 1.56, r * 0.55);
+      ctx.fill();
+      ctx.stroke();
+      // Duivelshoorns
+      ctx.fillStyle = '#fef08a';
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(side * r * 0.3, -r * 0.72);
+        ctx.lineTo(side * r * 0.8, -r * 1.28);
+        ctx.lineTo(side * r * 0.58, -r * 0.62);
+        ctx.closePath();
+        ctx.fill();
+      }
+      // Boze Ogen & tanden
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(-r * 0.28 + face * 2, -r * 0.12, 4, 0, Math.PI * 2);
+      ctx.arc(r * 0.28 + face * 2, -r * 0.12, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(-r * 0.38, r * 0.22, r * 0.76, r * 0.24);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-r * 0.32, r * 0.22, 4, 5);
+      ctx.fillRect(r * 0.18, r * 0.22, 4, 5);
+    } else if (e.kind === 'sentinel') {
+      // Gepantserde Ogre / Brute met brede schouders, beukende vuisten & slagtanden
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 2;
+      // Beukende armen
+      ctx.beginPath();
+      ctx.arc(-r * 0.92, 2 + waggle * 3, r * 0.32, 0, Math.PI * 2);
+      ctx.arc(r * 0.92, 2 - waggle * 3, r * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Breed lijf
+      ctx.beginPath();
+      ctx.roundRect(-r * 0.85, -r * 0.82, r * 1.7, r * 1.64, 7);
+      ctx.fill();
+      ctx.stroke();
+      // Boze wenkbrauw + gloeiende ogen
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(-r * 0.5, -r * 0.35, r, r * 0.28);
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(-r * 0.22 + face * 2, -r * 0.2, 2.8, 0, Math.PI * 2);
+      ctx.arc(r * 0.22 + face * 2, -r * 0.2, 2.8, 0, Math.PI * 2);
+      ctx.fill();
+      // Onderkaak met 2 dikke slagtanden
+      ctx.fillStyle = '#fef3c7';
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.36, r * 0.42);
+      ctx.lineTo(-r * 0.24, r * 0.14);
+      ctx.lineTo(-r * 0.12, r * 0.42);
+      ctx.moveTo(r * 0.12, r * 0.42);
+      ctx.lineTo(r * 0.24, r * 0.14);
+      ctx.lineTo(r * 0.36, r * 0.42);
+      ctx.fill();
+    } else if (e.kind === 'dasher') {
+      // Gevleugeld Roofmonster (Vleermuis / Jager)
+      const wingY = waggle * 5;
+      ctx.fillStyle = '#9a3412';
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(side * r * 1.45, -r * 0.5 + wingY);
+        ctx.lineTo(side * r * 1.0, r * 0.35 + wingY * 0.4);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.85, 0, Math.PI * 2);
+      ctx.fill();
+      // Spitse oren
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.5, -r * 0.5);
+      ctx.lineTo(-r * 0.75, -r * 1.2);
+      ctx.lineTo(-r * 0.1, -r * 0.75);
+      ctx.moveTo(r * 0.5, -r * 0.5);
+      ctx.lineTo(r * 0.75, -r * 1.2);
+      ctx.lineTo(r * 0.1, -r * 0.75);
+      ctx.fill();
+      // Felle roofdier-ogen
+      ctx.fillStyle = '#fef08a';
+      ctx.beginPath();
+      ctx.arc(-r * 0.28 + face * 1.8, -1, 2.5, 0, Math.PI * 2);
+      ctx.arc(r * 0.28 + face * 1.8, -1, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (e.kind === 'spitter') {
+      // Gif-Spugend Slijmmonster met 3 gifogen & open bek
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = '#ecfccb';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.ellipse(0, 2, r * 1.05, r * 0.85, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // 3 gif-oogjes
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(-r * 0.35, -r * 0.22, 2.6, 0, Math.PI * 2);
+      ctx.arc(r * 0.35, -r * 0.22, 2.6, 0, Math.PI * 2);
+      ctx.arc(0, -r * 0.45, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fef08a';
+      ctx.beginPath();
+      ctx.arc(0, -r * 0.45, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+      // Open gif-bek
+      ctx.fillStyle = '#365314';
+      ctx.beginPath();
+      ctx.arc(0, r * 0.28, r * 0.4, 0, Math.PI);
+      ctx.fill();
+    } else if (e.kind === 'splitter') {
+      // Paarse Tentakel-Hydra
+      ctx.strokeStyle = '#a855f7';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(side * r * 0.6, r * 0.2);
+        ctx.quadraticCurveTo(side * r * 1.25, r * 0.5 + waggle * 4, side * r * 1.1, r * 0.95);
+        ctx.stroke();
+      }
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = '#f3e8ff';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.92, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Meervoudige ogen
+      ctx.fillStyle = '#fef08a';
+      ctx.beginPath();
+      ctx.arc(-r * 0.3, -r * 0.15, 3, 0, Math.PI * 2);
+      ctx.arc(r * 0.3, -r * 0.15, 3, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (e.kind === 'goblin') {
+      // Schat-Goblin met puntoren & gouden geldzak
+      ctx.fillStyle = '#92400e';
+      ctx.beginPath();
+      ctx.arc(-face * r * 0.55, -2, r * 0.58, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#22c55e';
+      ctx.strokeStyle = '#fef08a';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.85, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Puntoren
+      ctx.fillStyle = '#22c55e';
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.75, -2);
+      ctx.lineTo(-r * 1.35, -7);
+      ctx.lineTo(-r * 0.65, 4);
+      ctx.moveTo(r * 0.75, -2);
+      ctx.lineTo(r * 1.35, -7);
+      ctx.lineTo(r * 0.65, 4);
+      ctx.fill();
+      ctx.fillStyle = '#fef08a';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('$', 0, 4);
+    } else {
+      // Swarmer -> Gremlin / Kevermonstertje met pootjes, hoorntjes, oogjes & tanden
+      // Bewegende pootjes
+      ctx.strokeStyle = '#881337';
+      ctx.lineWidth = 2.4;
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(side * r * 0.5, r * 0.2);
+        ctx.lineTo(side * r * 1.12, r * 0.65 + side * waggle * 3);
+        ctx.moveTo(side * r * 0.55, -r * 0.1);
+        ctx.lineTo(side * r * 1.15, -r * 0.15 - side * waggle * 3);
+        ctx.stroke();
+      }
+      // Rond monsterlijfje
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.88, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // 2 puntige hoorntjes
+      ctx.fillStyle = '#fef3c7';
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.45, -r * 0.65);
+      ctx.lineTo(-r * 0.75, -r * 1.2);
+      ctx.lineTo(-r * 0.15, -r * 0.8);
+      ctx.moveTo(r * 0.45, -r * 0.65);
+      ctx.lineTo(r * 0.75, -r * 1.2);
+      ctx.lineTo(r * 0.15, -r * 0.8);
+      ctx.fill();
+      // Boze oogjes
+      ctx.fillStyle = '#fef08a';
+      ctx.beginPath();
+      ctx.arc(-r * 0.28 + face * 1.5, -r * 0.15, 2.7, 0, Math.PI * 2);
+      ctx.arc(r * 0.28 + face * 1.5, -r * 0.15, 2.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(-r * 0.28 + face * 2, -r * 0.15, 1.1, 0, Math.PI * 2);
+      ctx.arc(r * 0.28 + face * 2, -r * 0.15, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+      // Bek met 2 kleine slagtanden
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(-r * 0.35, r * 0.2, r * 0.7, r * 0.22);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-r * 0.28, r * 0.2, 2.5, 3.2);
+      ctx.fillRect(r * 0.16, r * 0.2, 2.5, 3.2);
+    }
+
+    // Extra hoorns voor Tier 2 Apex Mutanten
+    if (e.tier === 2) {
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.moveTo(-4, -r * 0.82);
+      ctx.lineTo(0, -r * 1.38);
+      ctx.lineTo(4, -r * 0.82);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.restore();
+
+    // Compact HP bar voor Boss, Elite, Mutanten of beschadigde Sentinel
+    if (e.kind === 'boss' || e.kind === 'elite' || (e.tier >= 1 && e.hp < e.maxHp) || (e.kind === 'sentinel' && e.hp < e.maxHp)) {
+      const bw = e.radius * 2.2;
+      const frac = Math.max(0, Math.min(1, e.hp / e.maxHp));
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillRect(e.x - bw / 2, e.y + e.radius + 6, bw, 4);
+      ctx.fillStyle = e.kind === 'boss' ? '#ef4444' : e.tier === 2 ? '#f43f5e' : '#f59e0b';
+      ctx.fillRect(e.x - bw / 2, e.y + e.radius + 6, bw * frac, 4);
     }
   }
 }

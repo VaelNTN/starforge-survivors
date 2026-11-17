@@ -2,8 +2,12 @@ export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'my
 
 export type GearSlot = 'weapon' | 'armor' | 'helmet' | 'boots' | 'ring' | 'core';
 
+export type WeaponStyle = 'sword' | 'staff' | 'bow';
+
 export type WeaponId =
   | 'plasma_blade'
+  | 'arcane_staff'
+  | 'star_bow'
   | 'pulse_rifle'
   | 'orbital_saw'
   | 'tesla_arc'
@@ -177,6 +181,7 @@ export interface PlayerSave {
   pityCounter: number;
 
   selectedHero: HeroId;
+  selectedWeaponStyle: WeaponStyle;
   unlockedHeroes: HeroId[];
   heroLevels: Record<HeroId, number>;
 

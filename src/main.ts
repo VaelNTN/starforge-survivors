@@ -12,6 +12,7 @@ import {
   SLOT_LABELS,
   TALENTS,
   WEAPONS,
+  WEAPON_STYLES,
   WHEEL_REWARDS,
   WheelSliceDef,
 } from './data/gameCatalog';
@@ -42,7 +43,7 @@ import {
   saveGame,
   upgradeGearItem,
 } from './storage/saveState';
-import { ActiveRunBoosters, GearItem, GearSlot, HeroId, PlayerSave, RunSummary, WeaponId } from './types/game';
+import { ActiveRunBoosters, GearItem, GearSlot, HeroId, PlayerSave, RunSummary, WeaponId, WeaponStyle } from './types/game';
 import { gearSlotEmoji, heroPortraitSvg, weaponEmoji } from './ui/svgAssets';
 
 type MainTab = 'battle' | 'heroes' | 'forge' | 'pass' | 'shop';
@@ -96,6 +97,7 @@ class StarforgeApp {
     | { kind: 'revive'; canFreeAd: boolean }
     | { kind: 'pause' } = null;
   private bossBannerText: string | null = null;
+  private waveBannerText: string | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -277,6 +279,7 @@ class StarforgeApp {
     this.inBattle = true;
     this.battleModal = null;
     this.bossBannerText = null;
+    this.waveBannerText = null;
     this.modal = null;
     this.render();
 
@@ -288,6 +291,7 @@ class StarforgeApp {
       canvas,
       ch,
       this.save.selectedHero,
+      this.save.selectedWeaponStyle,
       stats,
       this.save.damageNumbersEnabled,
       this.save.vibrationEnabled,
@@ -312,6 +316,16 @@ class StarforgeApp {
             this.bossBannerText = null;
             this.renderBattleOverlays();
           }, 2600);
+        },
+        onWaveBanner: (message) => {
+          this.waveBannerText = message;
+          this.renderBattleOverlays();
+          window.setTimeout(() => {
+            if (this.waveBannerText === message) {
+              this.waveBannerText = null;
+              this.renderBattleOverlays();
+            }
+          }, 2400);
         },
         onDeathOffer: (canFreeAd) => {
           this.battleModal = { kind: 'revive', canFreeAd };
@@ -485,11 +499,27 @@ class StarforgeApp {
 
       <div class="card glow-cyan" style="align-items:center;text-align:center;gap:10px;">
         <div style="display:flex;align-items:center;gap:12px;width:100%;">
-          <div>${heroPortraitSvg(hero.id, 66)}</div>
+          <div>${heroPortraitSvg(hero.id, 66, this.save.selectedWeaponStyle)}</div>
           <div style="flex:1;text-align:left;min-width:0;">
             <div style="font-size:11px;color:var(--cyan);font-weight:800;">ACTIEVE HELD • Lv.${this.save.heroLevels[hero.id] || 1}</div>
             <div style="font-size:18px;font-weight:900;">${hero.name} <span style="font-size:12px;color:var(--muted);">(${hero.title})</span></div>
             <div style="font-size:11px;color:var(--muted);">❤️ ${stats.maxHp} • ⚔️ ${stats.atk} • 🎯 ${Math.round(stats.critChance * 100)}% Crit</div>
+          </div>
+        </div>
+
+        <div style="width:100%;text-align:left;">
+          <div style="font-size:11px;font-weight:900;color:var(--cyan);margin-bottom:5px;">🗡️ KIES JE WAPEN (ZICHTBAAR IN HAND)</div>
+          <div class="weapon-style-row">
+            ${WEAPON_STYLES.map((ws) => {
+              const active = this.save.selectedWeaponStyle === ws.id;
+              return `
+                <button class="weapon-style-chip ${active ? 'active' : ''}" data-pick-wstyle="${ws.id}" style="${active ? `border-color:${ws.color};` : ''}">
+                  <span style="font-size:20px;">${ws.icon}</span>
+                  <strong style="font-size:12px;color:${active ? ws.color : 'var(--text)'};">${ws.name}</strong>
+                  <small style="font-size:9px;color:var(--muted);line-height:1.15;">${ws.subtitle}</small>
+                </button>
+              `;
+            }).join('')}
           </div>
         </div>
 
@@ -1011,6 +1041,7 @@ class StarforgeApp {
               `<span class="badge-tag" style="background:rgba(14,22,43,0.85);border:1px solid ${w.evolved ? '#fbbf24' : 'var(--border)'};">${weaponEmoji(w.id)} ${w.evolved ? 'EVO' : `Lv${w.lv}`}</span>`
           )
           .join('')}
+        <span class="badge-tag" style="background:rgba(239,68,68,0.22);border:1px solid rgba(239,68,68,0.5);color:#fca5a5;">🌊 Golf ${s.threatLevel} (${s.enemyPowerPct}%)</span>
         ${s.combo >= 3 ? `<span class="combo-pill">🔥 ${s.combo}x COMBO</span>` : ''}
       </div>
       ${
@@ -1048,6 +1079,9 @@ class StarforgeApp {
     if (!slot) return;
 
     let html = '';
+    if (this.waveBannerText) {
+      html += `<div class="wave-alert-banner">${this.esc(this.waveBannerText)}</div>`;
+    }
     if (this.bossBannerText) {
       html += `<div class="boss-alert-banner">${this.esc(this.bossBannerText)}</div>`;
     }
@@ -1644,6 +1678,15 @@ class StarforgeApp {
     this.root.querySelector('#btn-pick-chapter')?.addEventListener('click', () => {
       this.modal = { kind: 'chapters' };
       this.render();
+    });
+
+    this.root.querySelectorAll<HTMLElement>('[data-pick-wstyle]').forEach((b) => {
+      b.addEventListener('click', () => {
+        this.save.selectedWeaponStyle = b.dataset.pickWstyle as WeaponStyle;
+        saveGame(this.save);
+        audio.playTap();
+        this.render();
+      });
     });
 
     this.root.querySelector('#btn-start-battle')?.addEventListener('click', () => {
