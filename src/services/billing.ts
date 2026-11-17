@@ -115,16 +115,16 @@ class MonetizationBridge {
   async purchaseSku(sku: string): Promise<PurchaseResult> {
     const def = SHOP_SKUS.find((s) => s.sku === sku);
     if (!def) {
-      return { purchased: false, productId: sku, error: 'Onbekend product' };
+      return { purchased: false, productId: sku, error: 'Unknown product' };
     }
 
     if (!Capacitor.isNativePlatform()) {
-      // Web / Browser preview sandbox simulation
+      // Web / Browser preview simulation
       return {
         purchased: true,
         isSandbox: true,
         productId: sku,
-        orderId: `WEB-SANDBOX-${Date.now()}`,
+        orderId: `WEB-PREVIEW-${Date.now()}`,
       };
     }
 
@@ -136,7 +136,7 @@ class MonetizationBridge {
       });
       if (res.purchased) return res;
 
-      // Only in Android DEBUG builds: allow local sideload sandbox fallback if Play Console products are not live yet
+      // Only in Android DEBUG builds: allow local sideload fallback if Play Console products are not live yet
       if (this.initResult.isDebugBuild && !res.cancelled && res.error?.includes('UNAVAILABLE')) {
         return await PlayBillingNative.purchaseDebugSandbox({ productId: def.sku });
       }
@@ -146,13 +146,13 @@ class MonetizationBridge {
         return await PlayBillingNative.purchaseDebugSandbox({ productId: def.sku }).catch(() => ({
           purchased: false,
           productId: sku,
-          error: err instanceof Error ? err.message : 'Betaling mislukt',
+          error: err instanceof Error ? err.message : 'Purchase failed',
         }));
       }
       return {
         purchased: false,
         productId: sku,
-        error: err instanceof Error ? err.message : 'Google Play betaling geannuleerd of niet beschikbaar',
+        error: err instanceof Error ? err.message : 'Google Play purchase cancelled or unavailable',
       };
     }
   }
@@ -178,7 +178,7 @@ class MonetizationBridge {
         if (!this.initResult.isDebugBuild) return res;
       } catch {
         if (!this.initResult.isDebugBuild) {
-          return { rewarded: false, error: 'Reclamevideo nog aan het laden, probeer zo opnieuw.' };
+          return { rewarded: false, error: 'Reward video is still loading, please try again shortly.' };
         }
       }
     }
@@ -188,7 +188,7 @@ class MonetizationBridge {
       const ok = await onDebugPreview();
       return { rewarded: ok, simulated: true };
     }
-    return { rewarded: false, error: 'Geen advertentie beschikbaar' };
+    return { rewarded: false, error: 'No reward video available right now' };
   }
 
   async maybeShowPostRunInterstitial(hasNoAds: boolean, totalRuns: number, lastShownAt: number): Promise<boolean> {

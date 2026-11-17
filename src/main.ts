@@ -70,6 +70,17 @@ const BOOSTER_COSTS: Record<keyof ActiveRunBoosters, number> = {
   doubleLuck: 700,
 };
 
+const AD_PLACEMENT_LABELS: Record<string, string> = {
+  draft_reroll: 'Bonus Roll',
+  battle_revive: 'Extra Revive',
+  shop_gems: 'Daily Gems',
+  lucky_wheel: 'Lucky Spin',
+  shop_cyber_key: 'Supply Key',
+  free_boosters: 'Run Boosters',
+  patrol_2x: '2x Patrol Loot',
+  double_run_loot: '2x Run Loot',
+};
+
 class StarforgeApp {
   private root: HTMLElement;
   private save: PlayerSave;
@@ -110,7 +121,7 @@ class StarforgeApp {
       this.save.pendingVipDailyGems = 0;
       saveGame(this.save);
       window.setTimeout(() => {
-        this.showToast(`👑 VIP Dagbonus: +${vipGems} Gems bijgeschreven!`);
+        this.showToast(`👑 VIP Daily Bonus: +${vipGems} Gems credited!`);
       }, 350);
     }
 
@@ -124,7 +135,7 @@ class StarforgeApp {
     if (owned.length > 0) {
       const restored = applyOwnedEntitledSkus(this.save, owned);
       if (restored.length > 0) {
-        this.showToast(`Hersteld: ${restored.join(', ')}`);
+        this.showToast(`Restored: ${restored.join(', ')}`);
       }
     }
     this.render();
@@ -155,7 +166,7 @@ class StarforgeApp {
   private fmtNum(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
     if (n >= 10_000) return `${(n / 1_000).toFixed(1)}k`;
-    return n.toLocaleString('nl-NL');
+    return n.toLocaleString('en-US');
   }
 
   private fmtTime(sec: number): string {
@@ -242,12 +253,12 @@ class StarforgeApp {
     if (res.purchased) {
       const reward = applyPurchaseReward(this.save, sku);
       audio.playPurchaseSuccess();
-      this.showToast(`🎉 Aankoop gelukt! ${reward.summaryText}${res.isSandbox ? ' [Test]' : ''}`);
+      this.showToast(`🎉 Purchase complete! ${reward.summaryText}`);
       this.render();
     } else if (res.pending) {
-      this.showToast('⏳ Betaling in behandeling bij Google Play...');
+      this.showToast('⏳ Payment pending on Google Play...');
     } else if (!res.cancelled) {
-      this.showToast(res.error || 'Aankoop mislukt');
+      this.showToast(res.error || 'Purchase failed');
     }
   }
 
@@ -264,7 +275,7 @@ class StarforgeApp {
     const ch = CHAPTERS.find((c) => c.id === chapterId) || CHAPTERS[0];
     const boosterCost = this.getBoosterCost();
     if (boosterCost > this.save.coins) {
-      this.showToast(`Niet genoeg Gold voor boosters (${this.fmtNum(boosterCost)} nodig)!`);
+      this.showToast(`Not enough Gold for boosters (${this.fmtNum(boosterCost)} needed)!`);
       return;
     }
     if (boosterCost > 0) {
@@ -424,7 +435,7 @@ class StarforgeApp {
           <div class="currencies">
             <button class="curr-chip" data-go-tab="shop">🪙 ${this.fmtNum(this.save.coins)}</button>
             <button class="curr-chip" data-go-tab="shop" style="border-color:rgba(56,189,248,0.5);">💎 ${this.fmtNum(this.save.gems)} <span style="color:var(--cyan);">+</span></button>
-            <button class="icon-btn" id="btn-settings" title="Instellingen">⚙️</button>
+            <button class="icon-btn" id="btn-settings" title="Settings" aria-label="Settings">⚙️</button>
           </div>
         </header>
 
@@ -434,21 +445,21 @@ class StarforgeApp {
 
         <nav class="bottom-nav">
           <button class="nav-btn ${this.tab === 'battle' ? 'active' : ''}" data-tab="battle">
-            <span class="ico">⚔️</span><span>Strijd</span>
+            <span class="ico">⚔️</span><span>Battle</span>
             ${!this.save.loginClaimedToday ? '<span class="nav-dot"></span>' : ''}
           </button>
           <button class="nav-btn ${this.tab === 'heroes' ? 'active' : ''}" data-tab="heroes">
-            <span class="ico">🦸</span><span>Helden</span>
+            <span class="ico">🦸</span><span>Heroes</span>
           </button>
           <button class="nav-btn ${this.tab === 'forge' ? 'active' : ''}" data-tab="forge">
-            <span class="ico">🔨</span><span>Forge</span>
+            <span class="ico">🛡️</span><span>Armory</span>
           </button>
           <button class="nav-btn ${this.tab === 'pass' ? 'active' : ''}" data-tab="pass">
-            <span class="ico">🎖️</span><span>Pass</span>
+            <span class="ico">🎖️</span><span>Quests</span>
             ${this.hasUnclaimedRewards() ? '<span class="nav-dot"></span>' : ''}
           </button>
           <button class="nav-btn ${this.tab === 'shop' ? 'active' : ''}" data-tab="shop">
-            <span class="ico">💎</span><span>Winkel</span>
+            <span class="ico">💎</span><span>Shop</span>
             ${!this.save.freeGiftClaimedToday ? '<span class="nav-dot"></span>' : ''}
           </button>
         </nav>
@@ -485,9 +496,9 @@ class StarforgeApp {
       ${
         !this.save.starterPackBought
           ? `
-        <div class="card glow-amber" style="flex-direction:row;align-items:center;justify-content:space-between;gap:10px;">
+        <div class="card glow-amber" style="flex-direction:row;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;">
           <div style="min-width:0;">
-            <div style="font-size:12px;font-weight:900;color:#fbbf24;">🔥 ${starterSku.badge}</div>
+            <div style="font-size:10px;font-weight:900;color:#fbbf24;">🔥 ${starterSku.badge}</div>
             <div style="font-size:14px;font-weight:900;">${starterSku.title}</div>
             <div style="font-size:11px;color:var(--muted);">${starterSku.subtitle}</div>
           </div>
@@ -497,112 +508,116 @@ class StarforgeApp {
           : ''
       }
 
-      <div class="card glow-cyan" style="align-items:center;text-align:center;gap:10px;">
-        <div style="display:flex;align-items:center;gap:12px;width:100%;">
-          <div>${heroPortraitSvg(hero.id, 66, this.save.selectedWeaponStyle)}</div>
-          <div style="flex:1;text-align:left;min-width:0;">
-            <div style="font-size:11px;color:var(--cyan);font-weight:800;">ACTIEVE HELD • Lv.${this.save.heroLevels[hero.id] || 1}</div>
-            <div style="font-size:18px;font-weight:900;">${hero.name} <span style="font-size:12px;color:var(--muted);">(${hero.title})</span></div>
-            <div style="font-size:11px;color:var(--muted);">❤️ ${stats.maxHp} • ⚔️ ${stats.atk} • 🎯 ${Math.round(stats.critChance * 100)}% Crit</div>
+      <div class="card glow-cyan" style="gap:10px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="flex-shrink:0;">${heroPortraitSvg(hero.id, 64, this.save.selectedWeaponStyle)}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;color:var(--cyan);font-weight:900;">LV.${this.save.heroLevels[hero.id] || 1}</span>
+              <span style="font-size:11px;color:var(--muted);font-weight:700;">• ${hero.title}</span>
+            </div>
+            <div style="font-size:18px;font-weight:900;line-height:1.15;">${hero.name}</div>
+            <div class="stat-pill-row">
+              <span class="stat-pill">❤️ ${stats.maxHp}</span>
+              <span class="stat-pill">⚔️ ${stats.atk}</span>
+              <span class="stat-pill">🎯 ${Math.round(stats.critChance * 100)}%</span>
+            </div>
           </div>
         </div>
 
-        <div style="width:100%;text-align:left;">
-          <div style="font-size:11px;font-weight:900;color:var(--cyan);margin-bottom:5px;">🗡️ KIES JE WAPEN (ZICHTBAAR IN HAND)</div>
-          <div class="weapon-style-row">
-            ${WEAPON_STYLES.map((ws) => {
-              const active = this.save.selectedWeaponStyle === ws.id;
-              return `
-                <button class="weapon-style-chip ${active ? 'active' : ''}" data-pick-wstyle="${ws.id}" style="${active ? `border-color:${ws.color};` : ''}">
-                  <span style="font-size:20px;">${ws.icon}</span>
-                  <strong style="font-size:12px;color:${active ? ws.color : 'var(--text)'};">${ws.name}</strong>
-                  <small style="font-size:9px;color:var(--muted);line-height:1.15;">${ws.subtitle}</small>
-                </button>
-              `;
-            }).join('')}
-          </div>
+        <div class="weapon-style-row">
+          ${WEAPON_STYLES.map((ws) => {
+            const active = this.save.selectedWeaponStyle === ws.id;
+            return `
+              <button class="weapon-style-chip ${active ? 'active' : ''}" data-pick-wstyle="${ws.id}" style="${active ? `border-color:${ws.color};` : ''}">
+                <span style="font-size:19px;">${ws.icon}</span>
+                <strong style="font-size:12px;color:${active ? ws.color : 'var(--text)'};">${ws.name}</strong>
+                <small style="font-size:9px;color:var(--muted);line-height:1.15;">${ws.subtitle}</small>
+              </button>
+            `;
+          }).join('')}
         </div>
-
-        <button class="card" id="btn-pick-chapter" style="width:100%;background:var(--bg-card-2);cursor:pointer;text-align:left;flex-direction:row;align-items:center;justify-content:space-between;">
-          <div>
-            <div style="font-size:11px;font-weight:800;color:${ch.accentColor};">GEKOZEN ARENA (TIK OM TE WISSELEN)</div>
-            <div style="font-size:15px;font-weight:900;">${ch.name}</div>
-            <div style="font-size:11px;color:var(--muted);">${ch.subtitle}</div>
-          </div>
-          <span style="font-size:18px;">🗺️ ▾</span>
-        </button>
-
-        <div style="width:100%;text-align:left;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
-            <span style="font-size:11px;font-weight:900;color:#fbbf24;">⚡ PRE-RUN BOOSTERS ${freeBoosters ? '(GRATIS ACTIEF!)' : ''}</span>
-            ${
-              !freeBoosters
-                ? `<button class="btn btn-ghost" id="btn-boosters-ad" style="padding:3px 8px;font-size:10px;border-color:#fbbf24;color:#fbbf24;">📺 Gratis via Video</button>`
-                : ''
-            }
-          </div>
-          <div class="boosters-row">
-            <button class="booster-chip ${this.boosters.extraWeapon ? 'active' : ''}" data-toggle-booster="extraWeapon">
-              <span>🗡️ +1 Wapen</span>
-              <small style="color:${freeBoosters ? 'var(--green)' : '#fbbf24'};">${freeBoosters ? 'GRATIS' : `🪙 ${BOOSTER_COSTS.extraWeapon}`}</small>
-            </button>
-            <button class="booster-chip ${this.boosters.overdriveAtk ? 'active' : ''}" data-toggle-booster="overdriveAtk">
-              <span>⚡ +25% ATK</span>
-              <small style="color:${freeBoosters ? 'var(--green)' : '#fbbf24'};">${freeBoosters ? 'GRATIS' : `🪙 ${BOOSTER_COSTS.overdriveAtk}`}</small>
-            </button>
-            <button class="booster-chip ${this.boosters.doubleLuck ? 'active' : ''}" data-toggle-booster="doubleLuck">
-              <span>🍀 2x Geluk</span>
-              <small style="color:${freeBoosters ? 'var(--green)' : '#fbbf24'};">${freeBoosters ? 'GRATIS' : `🪙 ${BOOSTER_COSTS.doubleLuck}`}</small>
-            </button>
-          </div>
-        </div>
-
-        <button class="btn btn-play-mega" id="btn-start-battle">
-          ⚔️ START STRIJD ${totalBoosterCost > 0 ? `(🪙 -${this.fmtNum(totalBoosterCost)})` : ''}
-        </button>
       </div>
 
-      <div class="quick-grid">
-        <button class="card" id="btn-open-wheel" style="cursor:pointer;text-align:left;border-color:${freeWheelLeft > 0 ? '#fbbf24' : 'var(--border)'};">
-          <div style="font-size:12px;font-weight:900;color:#fbbf24;">🎡 Starforge Rad</div>
-          <div style="font-size:13px;font-weight:800;">Win tot 💎 300!</div>
+      <button class="arena-select-card" id="btn-pick-chapter" style="border-color:${ch.accentColor}55;">
+        <div style="min-width:0;flex:1;">
+          <div style="font-size:10px;font-weight:900;color:${ch.accentColor};letter-spacing:0.5px;">ARENA • ⚡ ${ch.recommendedPower} REC</div>
+          <div style="font-size:15px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ch.name}</div>
+          <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ch.subtitle}</div>
+        </div>
+        <span class="badge-tag" style="background:var(--bg-card-2);border:1px solid var(--border);color:var(--text);padding:5px 9px;flex-shrink:0;">Change ▾</span>
+      </button>
+
+      <div class="card booster-strip">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:11px;font-weight:900;color:#fbbf24;">⚡ BOOSTERS ${freeBoosters ? '<span style="color:var(--green);">• FREE ACTIVE</span>' : ''}</span>
+          ${
+            !freeBoosters
+              ? `<button class="btn btn-ghost" id="btn-boosters-ad" style="padding:3px 9px;font-size:10px;border-color:#fbbf24;color:#fbbf24;">📺 Unlock All Free</button>`
+              : ''
+          }
+        </div>
+        <div class="boosters-row">
+          <button class="booster-chip ${this.boosters.extraWeapon ? 'active' : ''}" data-toggle-booster="extraWeapon">
+            <span>🗡️ +1 Weapon</span>
+            <small style="color:${freeBoosters ? 'var(--green)' : '#fbbf24'};">${freeBoosters ? 'FREE' : `🪙 ${BOOSTER_COSTS.extraWeapon}`}</small>
+          </button>
+          <button class="booster-chip ${this.boosters.overdriveAtk ? 'active' : ''}" data-toggle-booster="overdriveAtk">
+            <span>⚡ +25% ATK</span>
+            <small style="color:${freeBoosters ? 'var(--green)' : '#fbbf24'};">${freeBoosters ? 'FREE' : `🪙 ${BOOSTER_COSTS.overdriveAtk}`}</small>
+          </button>
+          <button class="booster-chip ${this.boosters.doubleLuck ? 'active' : ''}" data-toggle-booster="doubleLuck">
+            <span>🍀 2x Luck</span>
+            <small style="color:${freeBoosters ? 'var(--green)' : '#fbbf24'};">${freeBoosters ? 'FREE' : `🪙 ${BOOSTER_COSTS.doubleLuck}`}</small>
+          </button>
+        </div>
+      </div>
+
+      <button class="btn btn-play-mega" id="btn-start-battle">
+        ▶ PLAY ${totalBoosterCost > 0 ? `(🪙 -${this.fmtNum(totalBoosterCost)})` : ''}
+      </button>
+
+      <div class="quick-actions-grid">
+        <button class="quick-tile" id="btn-open-wheel" style="border-color:${freeWheelLeft > 0 ? '#fbbf24' : 'var(--border)'};">
+          <div style="font-size:11px;font-weight:900;color:#fbbf24;">🎡 Spin</div>
+          <div style="font-size:12px;font-weight:800;">Win 💎 300</div>
           <div style="font-size:10px;color:${freeWheelLeft > 0 ? 'var(--green)' : 'var(--muted)'};font-weight:800;">
-            ${freeWheelLeft > 0 ? '🎁 Gratis draai klaar!' : `📺 ${Math.max(0, ADMOB_CONFIG.dailyWheelAdSpinsLimit - this.save.wheelSpinsAdUsedToday)} Ad-draaien over`}
+            ${freeWheelLeft > 0 ? 'Free Spin!' : `${Math.max(0, ADMOB_CONFIG.dailyWheelAdSpinsLimit - this.save.wheelSpinsAdUsedToday)} Ad left`}
           </div>
         </button>
 
-        <button class="card" id="btn-open-codex" style="cursor:pointer;text-align:left;border-color:${unclaimedCodex > 0 ? '#a855f7' : 'var(--border)'};">
-          <div style="font-size:12px;font-weight:900;color:#c084fc;">📖 Wapen Codex</div>
-          <div style="font-size:13px;font-weight:800;">${this.save.discoveredEvos.length}/${WEAPONS.length} Evo's</div>
+        <button class="quick-tile" id="btn-open-codex" style="border-color:${unclaimedCodex > 0 ? '#a855f7' : 'var(--border)'};">
+          <div style="font-size:11px;font-weight:900;color:#c084fc;">📖 Codex</div>
+          <div style="font-size:12px;font-weight:800;">${this.save.discoveredEvos.length}/${WEAPONS.length} Evos</div>
           <div style="font-size:10px;color:${unclaimedCodex > 0 ? '#fbbf24' : 'var(--muted)'};font-weight:800;">
-            ${unclaimedCodex > 0 ? `💎 ${unclaimedCodex * 25} Gems claimen!` : 'Bekijk alle evoluties'}
+            ${unclaimedCodex > 0 ? `Claim 💎${unclaimedCodex * 25}` : 'Evolutions'}
           </div>
         </button>
 
-        <button class="card" id="btn-collect-patrol" style="cursor:pointer;text-align:left;">
-          <div style="font-size:12px;font-weight:900;color:var(--green);">🛸 Patrol Loot (${patrol.minutes}m)</div>
-          <div style="font-size:13px;font-weight:800;">🪙 +${this.fmtNum(patrol.coins)} • 📘 +${patrol.blueprints}</div>
-          <div style="font-size:10px;color:var(--muted);">${patrol.coins > 0 || patrol.blueprints > 0 ? 'Tik om 1x of 2x te innen' : 'Spaart automatisch offline Gold'}</div>
+        <button class="quick-tile" id="btn-collect-patrol">
+          <div style="font-size:11px;font-weight:900;color:var(--green);">🛸 Patrol</div>
+          <div style="font-size:12px;font-weight:800;">🪙 ${this.fmtNum(patrol.coins)}</div>
+          <div style="font-size:10px;color:var(--muted);font-weight:800;">${patrol.minutes}m • +${patrol.blueprints} BP</div>
         </button>
 
-        <button class="card" id="btn-open-streak" style="cursor:pointer;text-align:left;">
-          <div style="font-size:12px;font-weight:900;color:var(--amber);">📅 7-Daagse Streak</div>
-          <div style="font-size:13px;font-weight:800;">Dag ${this.save.loginStreak}/7</div>
+        <button class="quick-tile" id="btn-open-streak" style="border-color:${!this.save.loginClaimedToday ? 'var(--rose)' : 'var(--border)'};">
+          <div style="font-size:11px;font-weight:900;color:var(--amber);">📅 Streak</div>
+          <div style="font-size:12px;font-weight:800;">Day ${this.save.loginStreak}/7</div>
           <div style="font-size:10px;color:${this.save.loginClaimedToday ? 'var(--muted)' : 'var(--rose)'};font-weight:800;">
-            ${this.save.loginClaimedToday ? 'Vandaag geclaimd ✓' : '🎁 Nu claimen!'}
+            ${this.save.loginClaimedToday ? 'Claimed ✓' : 'Claim!'}
           </div>
         </button>
 
-        <button class="card" data-go-tab="shop" style="cursor:pointer;text-align:left;">
-          <div style="font-size:12px;font-weight:900;color:#fb7185;">🐷 Spaarpot Kluis</div>
-          <div style="font-size:13px;font-weight:800;">💎 ${this.save.piggyGems} / ${this.save.piggyMaxGems}</div>
-          <div class="progress-track"><div class="progress-fill" style="width:${Math.round((this.save.piggyGems / this.save.piggyMaxGems) * 100)}%;background:#f43f5e;"></div></div>
+        <button class="quick-tile" data-go-tab="shop">
+          <div style="font-size:11px;font-weight:900;color:#fb7185;">🐷 Vault</div>
+          <div style="font-size:12px;font-weight:800;">💎 ${this.save.piggyGems}</div>
+          <div class="progress-track" style="height:5px;"><div class="progress-fill" style="width:${Math.round((this.save.piggyGems / this.save.piggyMaxGems) * 100)}%;background:#f43f5e;"></div></div>
         </button>
 
-        <button class="card" id="btn-open-leaderboard" style="cursor:pointer;text-align:left;">
-          <div style="font-size:12px;font-weight:900;color:var(--cyan);">🏆 Endless Void Top</div>
-          <div style="font-size:13px;font-weight:800;">Beste: ${this.fmtTime(this.save.bestEndlessSec)}</div>
-          <div style="font-size:10px;color:var(--muted);">${this.save.bestEndlessKills} kills • Bekijk ranglijst</div>
+        <button class="quick-tile" id="btn-open-leaderboard">
+          <div style="font-size:11px;font-weight:900;color:var(--cyan);">🏆 Ranks</div>
+          <div style="font-size:12px;font-weight:800;">${this.fmtTime(this.save.bestEndlessSec)}</div>
+          <div style="font-size:10px;color:var(--muted);font-weight:800;">${this.save.bestEndlessKills} kills</div>
         </button>
       </div>
     `;
@@ -626,7 +641,7 @@ class StarforgeApp {
               </div>
               <div style="font-size:11px;color:var(--muted);margin-top:2px;">${h.description}</div>
               <div style="font-size:11px;font-weight:800;color:#fbbf24;margin-top:3px;">
-                ${weaponEmoji(h.startingWeapon)} Startwapen • 🔥 Ult: ${h.ultName} • ${h.perkLabel}
+                ${weaponEmoji(h.startingWeapon)} Signature • 🔥 Ult: ${h.ultName} • ${h.perkLabel}
               </div>
             </div>
           </div>
@@ -636,7 +651,7 @@ class StarforgeApp {
               unlocked
                 ? `
               <button class="btn ${selected ? 'btn-green' : 'btn-primary'}" style="flex:1;" data-select-hero="${h.id}">
-                ${selected ? '✓ GESELECTEERD' : 'KIES HELD'}
+                ${selected ? '✓ SELECTED' : 'SELECT HERO'}
               </button>
               <button class="btn btn-amber" data-upgrade-hero="${h.id}" ${this.save.coins < upgCost ? 'disabled' : ''}>
                 ⬆ Lv.${lv + 1} (🪙 ${this.fmtNum(upgCost)})
@@ -644,7 +659,7 @@ class StarforgeApp {
             `
                 : `
               <button class="btn btn-primary" style="flex:1;" data-unlock-hero="${h.id}" ${this.save.gems < h.unlockCostGems ? 'disabled' : ''}>
-                🔓 Ontgrendel (${h.unlockCostGems} 💎)
+                🔓 Unlock (${h.unlockCostGems} 💎)
               </button>
             `
             }
@@ -657,9 +672,9 @@ class StarforgeApp {
   private renderForgeTab(): string {
     return `
       <div class="subtabs">
-        <button class="subtab ${this.forgeSub === 'gear' ? 'active' : ''}" data-forge-sub="gear">⚔️ Uitrusting</button>
-        <button class="subtab ${this.forgeSub === 'crates' ? 'active' : ''}" data-forge-sub="crates">📦 Kisten (${this.save.basicKeys + this.save.cyberKeys})</button>
-        <button class="subtab ${this.forgeSub === 'talents' ? 'active' : ''}" data-forge-sub="talents">🧬 Talenten</button>
+        <button class="subtab ${this.forgeSub === 'gear' ? 'active' : ''}" data-forge-sub="gear">⚔️ Gear</button>
+        <button class="subtab ${this.forgeSub === 'crates' ? 'active' : ''}" data-forge-sub="crates">📦 Chests (${this.save.basicKeys + this.save.cyberKeys})</button>
+        <button class="subtab ${this.forgeSub === 'talents' ? 'active' : ''}" data-forge-sub="talents">🧬 Talents</button>
       </div>
       ${
         this.forgeSub === 'gear'
@@ -676,7 +691,7 @@ class StarforgeApp {
       const uid = this.save.equipped[sl];
       const item = uid ? this.save.inventory.find((g) => g.uid === uid) : null;
       if (!item) {
-        return `<div class="gear-slot-box"><span style="font-size:20px;opacity:0.4;">${gearSlotEmoji(sl)}</span><small style="color:var(--muted);">${SLOT_LABELS[sl]}</small><small>Leeg</small></div>`;
+        return `<div class="gear-slot-box"><span style="font-size:20px;opacity:0.4;">${gearSlotEmoji(sl)}</span><small style="color:var(--muted);">${SLOT_LABELS[sl]}</small><small>Empty</small></div>`;
       }
       const rm = RARITY_META[item.rarity];
       return `
@@ -699,7 +714,7 @@ class StarforgeApp {
     return `
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
-          <strong style="font-size:13px;">Uitrusting (6 Slots)</strong>
+          <strong style="font-size:13px;">Equipped Gear (6 Slots)</strong>
           <div style="display:flex;align-items:center;gap:6px;">
             <span style="font-size:11px;color:var(--cyan);font-weight:800;">📘 ${this.save.blueprints}</span>
             <button class="btn btn-ghost" id="btn-forge-codex" style="padding:4px 8px;font-size:10px;">📖 Codex</button>
@@ -710,7 +725,7 @@ class StarforgeApp {
 
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">
-          <strong style="font-size:13px;">Rugzak (${filteredItems.length}/${this.save.inventory.length})</strong>
+          <strong style="font-size:13px;">Backpack (${filteredItems.length}/${this.save.inventory.length})</strong>
           <div style="display:flex;gap:6px;">
             <button class="btn btn-ghost" id="btn-salvage-common" style="padding:5px 8px;font-size:10px;" ${commonSalvageCount === 0 ? 'disabled' : ''}>
               ♻️ Common (${commonSalvageCount})
@@ -721,7 +736,7 @@ class StarforgeApp {
           </div>
         </div>
         <div class="filter-row">
-          <button class="filter-chip ${this.gearFilter === 'all' ? 'active' : ''}" data-gear-filter="all">Alles</button>
+          <button class="filter-chip ${this.gearFilter === 'all' ? 'active' : ''}" data-gear-filter="all">All</button>
           ${(['weapon', 'armor', 'helmet', 'boots', 'ring', 'core'] as const)
             .map(
               (sl) =>
@@ -753,13 +768,13 @@ class StarforgeApp {
       <div class="card glow-purple">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div>
-            <strong style="font-size:15px;">📦 Cyber Supply Kist</strong>
-            <div style="font-size:11px;color:var(--muted);">Pity Garantie: nog <b>${Math.max(1, 10 - this.save.pityCounter)}</b> voor gegarandeerd Epic+!</div>
+            <strong style="font-size:15px;">📦 Cyber Supply Chest</strong>
+            <div style="font-size:11px;color:var(--muted);">Pity Guarantee: <b>${Math.max(1, 10 - this.save.pityCounter)}</b> more for guaranteed Epic+!</div>
           </div>
           <span class="badge-tag" style="background:rgba(168,85,247,0.3);color:#e9d5ff;">🔑 ${this.save.cyberKeys}</span>
         </div>
         <div style="display:flex;gap:8px;">
-          <button class="btn btn-primary" style="flex:1;" id="btn-open-cyber-key" ${this.save.cyberKeys < 1 ? 'disabled' : ''}>Gebruik Sleutel</button>
+          <button class="btn btn-primary" style="flex:1;" id="btn-open-cyber-key" ${this.save.cyberKeys < 1 ? 'disabled' : ''}>Use Key</button>
           <button class="btn btn-primary" style="flex:1;" id="btn-open-cyber-1" ${this.save.gems < CRATE_COSTS.cyberGems ? 'disabled' : ''}>1x (💎 ${CRATE_COSTS.cyberGems})</button>
           <button class="btn btn-amber" style="flex:1;" id="btn-open-cyber-10" ${this.save.gems < CRATE_COSTS.cyberTenGems ? 'disabled' : ''}>10x (💎 ${CRATE_COSTS.cyberTenGems})</button>
         </div>
@@ -768,8 +783,8 @@ class StarforgeApp {
       <div class="card glow-amber">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div>
-            <strong style="font-size:15px;">👑 Mythic Vault Kist</strong>
-            <div style="font-size:11px;color:var(--muted);">100% kans op Epic / Legendary / Mythic gear!</div>
+            <strong style="font-size:15px;">👑 Mythic Vault Chest</strong>
+            <div style="font-size:11px;color:var(--muted);">100% chance for Epic / Legendary / Mythic gear!</div>
           </div>
         </div>
         <button class="btn btn-amber" id="btn-open-mythic" ${this.save.gems < CRATE_COSTS.mythicGems ? 'disabled' : ''}>Open Mythic Vault (💎 ${CRATE_COSTS.mythicGems})</button>
@@ -778,13 +793,13 @@ class StarforgeApp {
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div>
-            <strong style="font-size:14px;">🧰 Basis Supply Kist</strong>
-            <div style="font-size:11px;color:var(--muted);">Common t/m Rare gear voor samenvoegen</div>
+            <strong style="font-size:14px;">🧰 Basic Supply Chest</strong>
+            <div style="font-size:11px;color:var(--muted);">Common to Rare gear for merging</div>
           </div>
           <span class="badge-tag" style="background:rgba(148,163,184,0.2);color:#e2e8f0;">🗝️ ${this.save.basicKeys}</span>
         </div>
         <div style="display:flex;gap:8px;">
-          <button class="btn btn-ghost" style="flex:1;" id="btn-open-basic-key" ${this.save.basicKeys < 1 ? 'disabled' : ''}>Gebruik Sleutel</button>
+          <button class="btn btn-ghost" style="flex:1;" id="btn-open-basic-key" ${this.save.basicKeys < 1 ? 'disabled' : ''}>Use Key</button>
           <button class="btn btn-green" style="flex:1;" id="btn-open-basic-coin" ${this.save.coins < CRATE_COSTS.basicCoins ? 'disabled' : ''}>Open (🪙 ${this.fmtNum(CRATE_COSTS.basicCoins)})</button>
         </div>
       </div>
@@ -817,8 +832,8 @@ class StarforgeApp {
     return `
       <div class="subtabs">
         <button class="subtab ${this.passSub === 'pass' ? 'active' : ''}" data-pass-sub="pass">🎖️ Season Pass</button>
-        <button class="subtab ${this.passSub === 'quests' ? 'active' : ''}" data-pass-sub="quests">📋 Dag-Quests</button>
-        <button class="subtab ${this.passSub === 'achievements' ? 'active' : ''}" data-pass-sub="achievements">🏆 Prestaties</button>
+        <button class="subtab ${this.passSub === 'quests' ? 'active' : ''}" data-pass-sub="quests">📋 Quests</button>
+        <button class="subtab ${this.passSub === 'achievements' ? 'active' : ''}" data-pass-sub="achievements">🏆 Achievements</button>
       </div>
       ${
         this.passSub === 'pass'
@@ -841,18 +856,18 @@ class StarforgeApp {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
           <div>
             <strong style="font-size:15px;">Starforge Season Pass • Tier ${curTier}/30</strong>
-            <div style="font-size:11px;color:var(--muted);">Pass XP: ${this.save.passXp} (speel & voltooi quests voor XP)</div>
+            <div style="font-size:11px;color:var(--muted);">Pass XP: ${this.save.passXp} (play & complete quests for XP)</div>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
             ${
               canClaimAny
-                ? `<button class="btn btn-green" id="btn-claim-all-pass" style="padding:7px 10px;font-size:11px;">🎁 Claim Alles</button>`
+                ? `<button class="btn btn-green" id="btn-claim-all-pass" style="padding:7px 10px;font-size:11px;">🎁 Claim All</button>`
                 : ''
             }
             ${
               !this.save.passPremiumUnlocked
-                ? `<button class="btn btn-amber" data-buy-sku="${passSku.sku}">Ontgrendel ${passPrice}</button>`
-                : `<span class="badge-tag" style="background:var(--green);color:#fff;">PREMIUM ACTIEF ✓</span>`
+                ? `<button class="btn btn-amber" data-buy-sku="${passSku.sku}">Unlock ${passPrice}</button>`
+                : `<span class="badge-tag" style="background:var(--green);color:#fff;">PREMIUM ACTIVE ✓</span>`
             }
           </div>
         </div>
@@ -868,7 +883,7 @@ class StarforgeApp {
               <strong>Tier ${pt.tier}</strong>
               <div style="display:flex;gap:6px;">
                 <button class="btn ${freeClaimed ? 'btn-ghost' : unlocked ? 'btn-green' : 'btn-ghost'}" style="padding:5px 9px;font-size:11px;" data-claim-pass-free="${pt.tier}" ${!unlocked || freeClaimed ? 'disabled' : ''}>
-                  ${freeClaimed ? '✓ ' : 'Gratis: '}${pt.freeLabel}
+                  ${freeClaimed ? '✓ ' : 'Free: '}${pt.freeLabel}
                 </button>
                 <button class="btn ${premClaimed ? 'btn-ghost' : unlocked && this.save.passPremiumUnlocked ? 'btn-amber' : 'btn-ghost'}" style="padding:5px 9px;font-size:11px;" data-claim-pass-prem="${pt.tier}" ${!unlocked || !this.save.passPremiumUnlocked || premClaimed ? 'disabled' : ''}>
                   ${premClaimed ? '✓ ' : '👑 '}${pt.premiumLabel}
@@ -891,7 +906,7 @@ class StarforgeApp {
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
             <div style="flex:1;">
               <strong style="font-size:13px;">${q.title} (${val}/${q.target})</strong>
-              <div style="font-size:11px;color:var(--cyan);">Beloning: 💎 ${q.gems} • 🪙 ${q.coins} • +${q.passXp} Pass XP</div>
+              <div style="font-size:11px;color:var(--cyan);">Reward: 💎 ${q.gems} • 🪙 ${q.coins} • +${q.passXp} Pass XP</div>
             </div>
             <button class="btn ${ready ? 'btn-green' : 'btn-ghost'}" data-claim-quest="${q.id}" ${!ready ? 'disabled' : ''}>
               ${claimed ? '✓' : ready ? 'Claim' : `${val}/${q.target}`}
@@ -922,7 +937,7 @@ class StarforgeApp {
             <div style="font-size:11px;color:var(--cyan);font-weight:800;">💎 ${a.gems}${a.cyberKeys ? ` • 🔑 ${a.cyberKeys}x` : ''}</div>
           </div>
           <button class="btn ${done && !claimed ? 'btn-green' : 'btn-ghost'}" data-claim-ach="${a.id}" ${!done || claimed ? 'disabled' : ''}>
-            ${claimed ? '✓' : done ? 'Claim' : 'Bezig'}
+            ${claimed ? '✓' : done ? 'Claim' : 'In Progress'}
           </button>
         </div>
       `;
@@ -932,10 +947,10 @@ class StarforgeApp {
   private renderShopTab(): string {
     const bStatus = billing.getBillingStatus();
     const statusText = bStatus.connected
-      ? '🟢 Google Play Billing Verbonden (Live)'
-      : bStatus.isDebugBuild
-        ? '🟡 Debug / Preview Sandbox Mode (gratis test-aankopen op toestel)'
-        : '⚪ Google Play Store vereist voor aankopen';
+      ? '🟢 Store Ready'
+      : bStatus.nativeAvailable && !bStatus.isDebugBuild
+        ? '⚪ Store Unavailable'
+        : '🛍️ Preview Store';
 
     const gemsLeft = Math.max(0, ADMOB_CONFIG.dailyAdGemsLimit - this.save.adGemsUsedToday);
     const keysLeft = Math.max(0, ADMOB_CONFIG.dailyAdKeysLimit - this.save.adKeysUsedToday);
@@ -943,27 +958,27 @@ class StarforgeApp {
     return `
       <div class="card" style="padding:8px 12px;font-size:11px;color:var(--muted);">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-          <span>${statusText}</span>
-          <button class="btn btn-ghost" id="btn-restore-purchases" style="padding:4px 8px;font-size:10px;">Herstel Aankopen</button>
+          <span style="font-weight:800;">${statusText}</span>
+          <button class="btn btn-ghost" id="btn-restore-purchases" style="padding:4px 8px;font-size:10px;">Restore Purchases</button>
         </div>
       </div>
 
       <div class="card glow-cyan">
-        <strong style="font-size:14px;">🎁 Gratis Dag-Cadeaus & Ad-Beloningen</strong>
+        <strong style="font-size:14px;">🎁 Free Daily Gifts & Bonus Rewards</strong>
         <div style="display:flex;flex-direction:column;gap:7px;">
           <button class="btn ${this.save.freeGiftClaimedToday ? 'btn-ghost' : 'btn-green'}" id="btn-free-daily-gift" ${this.save.freeGiftClaimedToday ? 'disabled' : ''}>
-            ${this.save.freeGiftClaimedToday ? '✓ Dag-Cadeau vandaag al geclaimd' : '🎁 Gratis Dag-Cadeau: +500 Gold & +20 Gems'}
+            ${this.save.freeGiftClaimedToday ? '✓ Daily Gift claimed today' : '🎁 Free Daily Gift: +500 Gold & +20 Gems'}
           </button>
           <button class="btn btn-primary" id="btn-ad-gems" ${gemsLeft <= 0 ? 'disabled' : ''}>
-            📺 Kijk Video → +${ADMOB_CONFIG.dailyAdGemsAmount} Gems (${gemsLeft}/${ADMOB_CONFIG.dailyAdGemsLimit} over vandaag)
+            📺 Watch Video → +${ADMOB_CONFIG.dailyAdGemsAmount} Gems (${gemsLeft}/${ADMOB_CONFIG.dailyAdGemsLimit} left today)
           </button>
           <button class="btn btn-amber" id="btn-ad-key" ${keysLeft <= 0 ? 'disabled' : ''}>
-            📺 Kijk Video → 1x Cyber Supply Sleutel (${keysLeft}/${ADMOB_CONFIG.dailyAdKeysLimit} over vandaag)
+            📺 Watch Video → 1x Cyber Supply Key (${keysLeft}/${ADMOB_CONFIG.dailyAdKeysLimit} left today)
           </button>
         </div>
       </div>
 
-      <div style="font-size:13px;font-weight:900;color:var(--amber);padding:2px 4px;">🔥 SPECIALE BUNDELS & VIP</div>
+      <div style="font-size:13px;font-weight:900;color:var(--amber);padding:2px 4px;">🔥 SPECIAL BUNDLES & VIP</div>
       ${SHOP_SKUS.filter((s) => s.category !== 'gems')
         .map((s) => {
           const alreadyBought =
@@ -973,7 +988,7 @@ class StarforgeApp {
           const price = billing.getLocalizedPrice(s.sku, s.fallbackPrice);
           const dynamicSub =
             s.sku === 'starforge_piggy_bank'
-              ? `Inhoud nu: 💎 ${this.save.piggyGems} / ${this.save.piggyMaxGems} Gems (min 300 gegarandeerd)`
+              ? `Current stash: 💎 ${this.save.piggyGems} / ${this.save.piggyMaxGems} Gems (min 300 guaranteed)`
               : s.subtitle;
 
           return `
@@ -984,14 +999,14 @@ class StarforgeApp {
                 <div style="font-size:11px;color:var(--muted);">${dynamicSub}</div>
               </div>
               <button class="btn" style="background:${s.highlightColor};flex-shrink:0;" data-buy-sku="${s.sku}" ${alreadyBought ? 'disabled' : ''}>
-                ${alreadyBought ? 'BEZIT ✓' : price}
+                ${alreadyBought ? 'OWNED ✓' : price}
               </button>
             </div>
           `;
         })
         .join('')}
 
-      <div style="font-size:13px;font-weight:900;color:var(--cyan);padding:2px 4px;">💎 STAR GEMS VOORRAAD (2x EERSTE KEER!)</div>
+      <div style="font-size:13px;font-weight:900;color:var(--cyan);padding:2px 4px;">💎 STAR GEMS STASH (2x FIRST BUY!)</div>
       <div class="quick-grid">
         ${SHOP_SKUS.filter((s) => s.category === 'gems')
           .map((s) => {
@@ -1000,9 +1015,9 @@ class StarforgeApp {
             return `
               <div class="card" style="border-color:${s.highlightColor}66;justify-content:space-between;">
                 <div>
-                  ${firstBonusAvail ? '<span class="badge-tag" style="background:#f59e0b;color:#000;">2x EERSTE KEER!</span>' : s.badge ? `<span class="badge-tag" style="background:${s.highlightColor}33;color:${s.highlightColor};">${s.badge}</span>` : ''}
+                  ${firstBonusAvail ? '<span class="badge-tag" style="background:#f59e0b;color:#000;">2x FIRST BUY!</span>' : s.badge ? `<span class="badge-tag" style="background:${s.highlightColor}33;color:${s.highlightColor};">${s.badge}</span>` : ''}
                   <div style="font-size:15px;font-weight:900;margin-top:4px;">💎 ${this.fmtNum(s.gems || 0)}</div>
-                  ${firstBonusAvail ? `<div style="font-size:10px;color:#fbbf24;font-weight:800;">+${this.fmtNum(s.firstBuyBonusGems || 0)} extra gratis!</div>` : ''}
+                  ${firstBonusAvail ? `<div style="font-size:10px;color:#fbbf24;font-weight:800;">+${this.fmtNum(s.firstBuyBonusGems || 0)} extra free!</div>` : ''}
                 </div>
                 <button class="btn btn-primary" data-buy-sku="${s.sku}" style="background:${s.highlightColor};">${price}</button>
               </div>
@@ -1032,7 +1047,7 @@ class StarforgeApp {
         <span>Lv.${s.level} • ❤️ ${s.hp}/${s.maxHp}</span>
         <span style="color:var(--cyan);font-size:14px;">${timerText}</span>
         <span>💀 ${s.kills} • 🪙 ${s.coins}</span>
-        <button class="icon-btn" id="btn-battle-pause" style="width:28px;height:28px;font-size:12px;">⏸</button>
+        <button class="icon-btn" id="btn-battle-pause" aria-label="Pause">⏸</button>
       </div>
       <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
         ${s.weapons
@@ -1041,7 +1056,7 @@ class StarforgeApp {
               `<span class="badge-tag" style="background:rgba(14,22,43,0.85);border:1px solid ${w.evolved ? '#fbbf24' : 'var(--border)'};">${weaponEmoji(w.id)} ${w.evolved ? 'EVO' : `Lv${w.lv}`}</span>`
           )
           .join('')}
-        <span class="badge-tag" style="background:rgba(239,68,68,0.22);border:1px solid rgba(239,68,68,0.5);color:#fca5a5;">🌊 Golf ${s.threatLevel} (${s.enemyPowerPct}%)</span>
+        <span class="badge-tag" style="background:rgba(239,68,68,0.22);border:1px solid rgba(239,68,68,0.5);color:#fca5a5;">🌊 Wave ${s.threatLevel} (${s.enemyPowerPct}%)</span>
         ${s.combo >= 3 ? `<span class="combo-pill">🔥 ${s.combo}x COMBO</span>` : ''}
       </div>
       ${
@@ -1065,7 +1080,7 @@ class StarforgeApp {
     const ultBtn = this.root.querySelector<HTMLElement>('#btn-ult');
     const ultLbl = this.root.querySelector<HTMLElement>('#lbl-ult');
     if (ultBtn && ultLbl) {
-      ultLbl.textContent = s.ultCharge >= 100 ? 'KLAAR!' : `${s.ultCharge}%`;
+      ultLbl.textContent = s.ultCharge >= 100 ? 'READY!' : `${s.ultCharge}%`;
       ultBtn.classList.toggle('ready-ult', s.ultCharge >= 100);
     }
     const dashBtn = this.root.querySelector<HTMLElement>('#btn-dash');
@@ -1092,8 +1107,8 @@ class StarforgeApp {
         <div class="modal-backdrop">
           <div class="modal-card">
             <div style="text-align:center;">
-              <div style="font-size:12px;color:var(--cyan);font-weight:900;">LEVEL UP! KIES EEN UPGRADE</div>
-              <div style="font-size:18px;font-weight:900;">Niveau ${this.hudSnap?.level || 2}</div>
+              <div style="font-size:12px;color:var(--cyan);font-weight:900;">LEVEL UP • DRAFT</div>
+              <div style="font-size:18px;font-weight:900;">Level ${this.hudSnap?.level || 2}</div>
             </div>
             ${m.options
               .map(
@@ -1114,7 +1129,7 @@ class StarforgeApp {
               !m.rerolled
                 ? `
               <button class="btn btn-ghost" id="btn-draft-reroll">
-                🎲 Wissel Keuzes (${this.save.rerollTokens > 0 ? `1x Token (${this.save.rerollTokens})` : '📺 Kijk Video'})
+                🎲 Reroll Choices (${this.save.rerollTokens > 0 ? `1x Token (${this.save.rerollTokens})` : '📺 Watch Video'})
               </button>
             `
                 : ''
@@ -1127,7 +1142,7 @@ class StarforgeApp {
         <div class="modal-backdrop">
           <div class="modal-card" style="border-color:#fbbf24;text-align:center;">
             <div style="font-size:32px;">🎁✨</div>
-            <div style="font-size:18px;font-weight:900;color:#fbbf24;">ELITE JACKPOT KIST!</div>
+            <div style="font-size:18px;font-weight:900;color:#fbbf24;">ELITE JACKPOT CHEST!</div>
             <div style="font-size:13px;color:var(--green);font-weight:800;">+🪙 ${m.coins} Bonus Gold</div>
             ${m.rewards
               .map(
@@ -1139,7 +1154,7 @@ class StarforgeApp {
             `
               )
               .join('')}
-            <button class="btn btn-amber" id="btn-close-chest">DOORVECHTEN!</button>
+            <button class="btn btn-amber" id="btn-close-chest">KEEP FIGHTING!</button>
           </div>
         </div>
       `;
@@ -1148,17 +1163,17 @@ class StarforgeApp {
         <div class="modal-backdrop">
           <div class="modal-card" style="border-color:var(--rose);text-align:center;">
             <div style="font-size:34px;">💀⚡</div>
-            <div style="font-size:20px;font-weight:900;">NEERGEHAALD!</div>
-            <div style="font-size:12px;color:var(--muted);">Sta direct op met 100% HP & een schokgolf!</div>
+            <div style="font-size:20px;font-weight:900;">DEFEATED!</div>
+            <div style="font-size:12px;color:var(--muted);">Get right back up with 100% HP & a shockwave!</div>
             ${
               m.canFreeAd
-                ? `<button class="btn btn-green" id="btn-revive-ad">📺 Gratis Herrijzen (Kijk Video)</button>`
+                ? `<button class="btn btn-green" id="btn-revive-ad">📺 Free Revive (Watch Video)</button>`
                 : ''
             }
             <button class="btn btn-primary" id="btn-revive-token" ${this.save.reviveTokens < 1 && this.save.gems < 40 ? 'disabled' : ''}>
-              ${this.save.reviveTokens > 0 ? `🔥 Gebruik Revive Token (${this.save.reviveTokens}x)` : '💎 Herrijzen (40 Gems)'}
+              ${this.save.reviveTokens > 0 ? `🔥 Use Revive Token (${this.save.reviveTokens}x)` : '💎 Revive (40 Gems)'}
             </button>
-            <button class="btn btn-ghost" id="btn-give-up">Stop Strijd & Claim Loot</button>
+            <button class="btn btn-ghost" id="btn-give-up">End Run & Claim Loot</button>
           </div>
         </div>
       `;
@@ -1168,12 +1183,12 @@ class StarforgeApp {
       html += `
         <div class="modal-backdrop">
           <div class="modal-card" style="text-align:center;">
-            <div style="font-size:18px;font-weight:900;">⏸️ PAUZE</div>
+            <div style="font-size:18px;font-weight:900;">⏸️ PAUSED</div>
             ${
               loadout
                 ? `
               <div class="card" style="text-align:left;background:var(--bg-card-2);gap:6px;">
-                <div style="font-size:11px;font-weight:900;color:var(--cyan);">ACTIEVE WAPENS & EVOLUTIE-HINTS</div>
+                <div style="font-size:11px;font-weight:900;color:var(--cyan);">ACTIVE WEAPONS & EVOLUTION HINTS</div>
                 ${loadout.weapons
                   .map((w) => {
                     const def = WEAPONS.find((x) => x.id === w.id)!;
@@ -1200,8 +1215,8 @@ class StarforgeApp {
             `
                 : ''
             }
-            <button class="btn btn-primary" id="btn-resume-battle">▶ Doorgaan</button>
-            <button class="btn btn-rose" id="btn-quit-battle">🏳️ Stoppen (Loot bewaren)</button>
+            <button class="btn btn-primary" id="btn-resume-battle">▶ Resume</button>
+            <button class="btn btn-rose" id="btn-quit-battle">🏳️ End Run (Keep Loot)</button>
           </div>
         </div>
       `;
@@ -1292,13 +1307,14 @@ class StarforgeApp {
     if (!m) return '';
 
     if (m.kind === 'ad_preview') {
+      const placementLabel = AD_PLACEMENT_LABELS[m.placement] || 'Bonus Reward';
       return `
         <div class="modal-backdrop">
           <div class="modal-card" style="text-align:center;">
             <div style="font-size:28px;">📺</div>
-            <div style="font-size:16px;font-weight:900;">Reward Video (${m.placement})</div>
-            <div style="font-size:12px;color:var(--muted);">Test/Preview weergave — beloning over <b>${m.secondsLeft}s</b>...</div>
-            <button class="btn btn-ghost" id="btn-ad-cancel">Annuleren (geen beloning)</button>
+            <div style="font-size:16px;font-weight:900;">${this.esc(placementLabel)}</div>
+            <div style="font-size:12px;color:var(--muted);">Sponsored reward unlocks in <b>${m.secondsLeft}s</b>...</div>
+            <button class="btn btn-ghost" id="btn-ad-cancel">Cancel</button>
           </div>
         </div>
       `;
@@ -1309,17 +1325,17 @@ class StarforgeApp {
         <div class="modal-backdrop" id="modal-bg">
           <div class="modal-card">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <strong style="font-size:16px;">🗺️ Kies Arena / Chapter</strong>
-              <button class="icon-btn" id="modal-close">✕</button>
+              <strong style="font-size:16px;">🗺️ Select Arena / Chapter</strong>
+              <button class="icon-btn" id="modal-close" aria-label="Close">✕</button>
             </div>
             ${CHAPTERS.map((c) => {
               const unlocked = c.mode !== 'chapter' || c.id <= this.save.highestChapterUnlocked;
               const cleared = this.save.clearedChapters.includes(c.id);
               const extraMeta =
                 c.mode === 'boss_rush'
-                  ? `• Clears: ${this.save.bossRushClears}${this.save.bestBossRushSec > 0 ? ` (Beste ${this.fmtTime(this.save.bestBossRushSec)})` : ''}`
+                  ? `• Clears: ${this.save.bossRushClears}${this.save.bestBossRushSec > 0 ? ` (Best ${this.fmtTime(this.save.bestBossRushSec)})` : ''}`
                   : c.mode === 'endless' && this.save.bestEndlessSec > 0
-                    ? `• Beste: ${this.fmtTime(this.save.bestEndlessSec)}`
+                    ? `• Best: ${this.fmtTime(this.save.bestEndlessSec)}`
                     : '';
               return `
                 <button class="card" data-pick-chapter="${c.id}" style="text-align:left;cursor:pointer;border-color:${c.id === this.selectedChapterId ? c.accentColor : 'var(--border)'};opacity:${unlocked ? 1 : 0.45};" ${!unlocked ? 'disabled' : ''}>
@@ -1328,7 +1344,7 @@ class StarforgeApp {
                     <small style="color:var(--muted);">⚡ ${c.recommendedPower}</small>
                   </div>
                   <div style="font-size:11px;color:var(--muted);">${c.subtitle}</div>
-                  <div style="font-size:10px;color:#fbbf24;">Boss: ${c.bossName} • Beloning: 🪙 ${c.rewardCoins} & 💎 ${c.rewardGems} ${extraMeta}</div>
+                  <div style="font-size:10px;color:#fbbf24;">Boss: ${c.bossName} • Reward: 🪙 ${c.rewardCoins} & 💎 ${c.rewardGems} ${extraMeta}</div>
                 </button>
               `;
             }).join('')}
@@ -1343,16 +1359,16 @@ class StarforgeApp {
         <div class="modal-backdrop" id="modal-bg">
           <div class="modal-card" style="text-align:center;border-color:var(--green);">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <strong style="font-size:16px;color:var(--green);">🛸 Patrol Loot (${p.minutes}m / max 12u)</strong>
-              <button class="icon-btn" id="modal-close">✕</button>
+              <strong style="font-size:16px;color:var(--green);">🛸 Patrol Loot (${p.minutes}m / max 12h)</strong>
+              <button class="icon-btn" id="modal-close" aria-label="Close">✕</button>
             </div>
             <div class="card" style="background:var(--bg-card-2);">
               <div style="font-size:18px;font-weight:900;">🪙 +${this.fmtNum(p.coins)} Gold</div>
               <div style="font-size:14px;font-weight:800;color:var(--cyan);">📘 +${p.blueprints} Blueprints</div>
-              <div style="font-size:11px;color:var(--muted);">Kijk een korte video om direct 2x buit te ontvangen!</div>
+              <div style="font-size:11px;color:var(--muted);">Watch a short video to claim 2x loot instantly!</div>
             </div>
             <button class="btn btn-amber" id="btn-patrol-2x">📺 2x Loot via Video! (🪙 +${this.fmtNum(p.coins * 2)})</button>
-            <button class="btn btn-green" id="btn-patrol-1x">1x Gratis Innen</button>
+            <button class="btn btn-green" id="btn-patrol-1x">Claim 1x Free</button>
           </div>
         </div>
       `;
@@ -1370,8 +1386,8 @@ class StarforgeApp {
         <div class="modal-backdrop" id="modal-bg">
           <div class="modal-card" style="text-align:center;border-color:#fbbf24;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <strong style="font-size:16px;color:#fbbf24;">🎡 Starforge Geluksrad</strong>
-              <button class="icon-btn" id="modal-close" ${m.spinning ? 'disabled' : ''}>✕</button>
+              <strong style="font-size:16px;color:#fbbf24;">🎡 Starforge Lucky Wheel</strong>
+              <button class="icon-btn" id="modal-close" aria-label="Close" ${m.spinning ? 'disabled' : ''}>✕</button>
             </div>
 
             <div class="wheel-stage">
@@ -1387,18 +1403,18 @@ class StarforgeApp {
 
             ${
               m.lastResult
-                ? `<div class="card glow-amber" style="padding:8px;font-size:13px;font-weight:900;color:#fbbf24;">🎉 Gewonnen: ${m.lastResult.label}!</div>`
-                : `<div style="font-size:11px;color:var(--muted);">Draai voor Gold, Gems, Cyber Keys & de 300 Gems Jackpot!</div>`
+                ? `<div class="card glow-amber" style="padding:8px;font-size:13px;font-weight:900;color:#fbbf24;">🎉 Won: ${m.lastResult.label}!</div>`
+                : `<div style="font-size:11px;color:var(--muted);">Spin for Gold, Gems, Cyber Keys & the 300 Gems Jackpot!</div>`
             }
 
             <div style="display:flex;flex-direction:column;gap:7px;">
               ${
                 freeLeft > 0
-                  ? `<button class="btn btn-green" id="btn-wheel-free" ${m.spinning ? 'disabled' : ''}>🎁 Gratis Dag-Draai (${freeLeft} over)</button>`
-                  : `<button class="btn btn-amber" id="btn-wheel-ad" ${m.spinning || adLeft <= 0 ? 'disabled' : ''}>📺 Gratis Draai via Video (${adLeft}/${ADMOB_CONFIG.dailyWheelAdSpinsLimit} over)</button>`
+                  ? `<button class="btn btn-green" id="btn-wheel-free" ${m.spinning ? 'disabled' : ''}>🎁 Free Daily Spin (${freeLeft} left)</button>`
+                  : `<button class="btn btn-amber" id="btn-wheel-ad" ${m.spinning || adLeft <= 0 ? 'disabled' : ''}>📺 Free Spin via Video (${adLeft}/${ADMOB_CONFIG.dailyWheelAdSpinsLimit} left)</button>`
               }
               <button class="btn btn-primary" id="btn-wheel-gems" ${m.spinning || this.save.gems < ADMOB_CONFIG.wheelGemCost ? 'disabled' : ''}>
-                💎 Draai Nu (${ADMOB_CONFIG.wheelGemCost} Gems)
+                💎 Spin Now (${ADMOB_CONFIG.wheelGemCost} Gems)
               </button>
             </div>
           </div>
@@ -1411,11 +1427,11 @@ class StarforgeApp {
         <div class="modal-backdrop" id="modal-bg">
           <div class="modal-card">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <strong style="font-size:16px;color:#c084fc;">📖 Wapen & Evolutie Codex</strong>
-              <button class="icon-btn" id="modal-close">✕</button>
+              <strong style="font-size:16px;color:#c084fc;">📖 Weapon & Evolution Codex</strong>
+              <button class="icon-btn" id="modal-close" aria-label="Close">✕</button>
             </div>
             <div style="font-size:11px;color:var(--muted);">
-              Breng een wapen naar Lv.5 samen met het juiste Passive-item in een run om de Evolutie te ontgrendelen (+25 💎 per ontdekking!).
+              Level a weapon to Lv.5 alongside its matching Passive during a run to unlock its Evolution (+25 💎 per discovery!).
             </div>
             ${WEAPONS.map((w) => {
               const pDef = PASSIVES.find((p) => p.id === w.evoPassive)!;
@@ -1428,10 +1444,10 @@ class StarforgeApp {
                     ${
                       disc && !claimed
                         ? `<button class="btn btn-amber" data-claim-codex="${w.id}" style="padding:4px 8px;font-size:10px;">Claim +25 💎</button>`
-                        : `<span class="badge-tag" style="background:${disc ? 'var(--green)' : 'rgba(148,163,184,0.2)'};color:#fff;">${claimed ? 'Geclaimd ✓' : disc ? 'Ontdekt' : 'Vergrendeld'}</span>`
+                        : `<span class="badge-tag" style="background:${disc ? 'var(--green)' : 'rgba(148,163,184,0.2)'};color:#fff;">${claimed ? 'Claimed ✓' : disc ? 'Discovered' : 'Locked'}</span>`
                     }
                   </div>
-                  <div style="font-size:11px;color:var(--text);">Vereist Passive: <b style="color:${pDef.color};">${pDef.name}</b></div>
+                  <div style="font-size:11px;color:var(--text);">Required Passive: <b style="color:${pDef.color};">${pDef.name}</b></div>
                   <div style="font-size:10px;color:var(--muted);">${w.evoDesc}</div>
                 </div>
               `;
@@ -1446,8 +1462,8 @@ class StarforgeApp {
         <div class="modal-backdrop" id="modal-bg">
           <div class="modal-card">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <strong style="font-size:16px;">📅 7-Daagse Login Streak</strong>
-              <button class="icon-btn" id="modal-close">✕</button>
+              <strong style="font-size:16px;">📅 7-Day Login Streak</strong>
+              <button class="icon-btn" id="modal-close" aria-label="Close">✕</button>
             </div>
             <div class="quick-grid">
               ${LOGIN_STREAK_REWARDS.map((r) => {
@@ -1455,14 +1471,14 @@ class StarforgeApp {
                 const past = r.day < this.save.loginStreak || (isToday && this.save.loginClaimedToday);
                 return `
                   <div class="card" style="border-color:${isToday ? 'var(--amber)' : 'var(--border)'};opacity:${past ? 0.6 : 1};">
-                    <strong style="font-size:12px;">Dag ${r.day} ${past ? '✓' : ''}</strong>
+                    <strong style="font-size:12px;">Day ${r.day} ${past ? '✓' : ''}</strong>
                     <div style="font-size:12px;color:var(--cyan);font-weight:800;">${r.label}</div>
                   </div>
                 `;
               }).join('')}
             </div>
             <button class="btn ${this.save.loginClaimedToday ? 'btn-ghost' : 'btn-amber'}" id="btn-claim-streak" ${this.save.loginClaimedToday ? 'disabled' : ''}>
-              ${this.save.loginClaimedToday ? 'Vandaag al geclaimd ✓' : '🎁 Claim Dag-Beloning!'}
+              ${this.save.loginClaimedToday ? 'Claimed today ✓' : '🎁 Claim Daily Reward!'}
             </button>
           </div>
         </div>
@@ -1474,15 +1490,15 @@ class StarforgeApp {
         <div class="modal-backdrop" id="modal-bg">
           <div class="modal-card">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <strong style="font-size:16px;">🏆 Endless Void Ranglijst</strong>
-              <button class="icon-btn" id="modal-close">✕</button>
+              <strong style="font-size:16px;">🏆 Endless Void Leaderboard</strong>
+              <button class="icon-btn" id="modal-close" aria-label="Close">✕</button>
             </div>
             ${this.save.leaderboard
               .map(
                 (e, idx) => `
               <div class="card" style="padding:8px 10px;flex-direction:row;align-items:center;justify-content:space-between;border-color:${e.isPlayer ? 'var(--cyan)' : 'var(--border)'};">
                 <div>
-                  <strong>#${idx + 1} ${this.esc(e.name)} ${e.isPlayer ? '(JIJ)' : ''}</strong>
+                  <strong>#${idx + 1} ${this.esc(e.name)} ${e.isPlayer ? '(YOU)' : ''}</strong>
                   <div style="font-size:11px;color:var(--muted);">⏱️ ${this.fmtTime(e.wave)} • ⚡ ${e.power}</div>
                 </div>
                 <strong style="color:var(--amber);">${this.fmtNum(e.score)} pts</strong>
@@ -1514,13 +1530,13 @@ class StarforgeApp {
           <div class="modal-card" style="border-color:${rm.color};">
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <strong style="font-size:16px;color:${rm.color};">${gearSlotEmoji(item.slot)} ${item.name}</strong>
-              <button class="icon-btn" id="modal-close">✕</button>
+              <button class="icon-btn" id="modal-close" aria-label="Close">✕</button>
             </div>
             <div style="font-size:12px;">
-              Zeldzaamheid: <b style="color:${rm.color};">${rm.label}</b> • Level <b>${item.level}/${rm.maxLv}</b> • ⚡ <b>${itemPower}</b>
+              Rarity: <b style="color:${rm.color};">${rm.label}</b> • Level <b>${item.level}/${rm.maxLv}</b> • ⚡ <b>${itemPower}</b>
               ${
                 !isEq && eqItem
-                  ? `<span style="color:${powerDelta >= 0 ? 'var(--green)' : 'var(--rose)'};font-weight:900;"> (${powerDelta >= 0 ? `+${powerDelta}` : powerDelta} vs aangetrokken)</span>`
+                  ? `<span style="color:${powerDelta >= 0 ? 'var(--green)' : 'var(--rose)'};font-weight:900;"> (${powerDelta >= 0 ? `+${powerDelta}` : powerDelta} vs equipped)</span>`
                   : ''
               }
             </div>
@@ -1528,7 +1544,7 @@ class StarforgeApp {
             ${item.perkText ? `<div style="font-size:12px;color:var(--cyan);">✨ Perk: ${item.perkText}</div>` : ''}
             <div style="display:flex;gap:8px;">
               <button class="btn ${isEq ? 'btn-ghost' : 'btn-green'}" style="flex:1;" id="btn-gear-equip" ${isEq ? 'disabled' : ''}>
-                ${isEq ? '✓ Aangetrokken' : 'Aantrekken'}
+                ${isEq ? '✓ Equipped' : 'Equip'}
               </button>
               <button class="btn btn-primary" style="flex:1;" id="btn-gear-upgrade" ${item.level >= rm.maxLv || this.save.coins < cost.coins || this.save.blueprints < cost.blueprints ? 'disabled' : ''}>
                 ⬆ Upgrade (🪙 ${this.fmtNum(cost.coins)} • 📘 ${cost.blueprints})
@@ -1536,12 +1552,12 @@ class StarforgeApp {
             </div>
             ${
               mergeCount >= 3
-                ? `<button class="btn btn-amber" id="btn-gear-merge">✨ Merge 3x → Volgende Rarity!</button>`
-                : `<div style="font-size:11px;color:var(--muted);">Verzamel 3 dezelfde items (${mergeCount}/3) om samen te voegen!</div>`
+                ? `<button class="btn btn-amber" id="btn-gear-merge">✨ Merge 3x → Next Rarity!</button>`
+                : `<div style="font-size:11px;color:var(--muted);">Collect 3 identical items (${mergeCount}/3) to merge!</div>`
             }
             ${
               !isEq
-                ? `<button class="btn btn-rose" id="btn-gear-salvage" style="font-size:12px;">♻️ Ontmantel (+🪙 ${this.fmtNum(salvage.coins)} • +📘 ${salvage.blueprints})</button>`
+                ? `<button class="btn btn-rose" id="btn-gear-salvage" style="font-size:12px;">♻️ Salvage (+🪙 ${this.fmtNum(salvage.coins)} • +📘 ${salvage.blueprints})</button>`
                 : ''
             }
           </div>
@@ -1568,7 +1584,7 @@ class StarforgeApp {
                 })
                 .join('')}
             </div>
-            <button class="btn btn-primary" id="modal-close">Super!</button>
+            <button class="btn btn-primary" id="modal-close">Awesome!</button>
           </div>
         </div>
       `;
@@ -1580,23 +1596,23 @@ class StarforgeApp {
         <div class="modal-backdrop">
           <div class="modal-card" style="text-align:center;border-color:${s.victory ? 'var(--green)' : 'var(--cyan)'};">
             <div style="font-size:32px;">${s.victory ? '🏆✨' : '⚔️🔥'}</div>
-            <div style="font-size:20px;font-weight:900;">${s.victory ? 'OVERWINNING!' : 'STRIJD VOLTOOID'}</div>
+            <div style="font-size:20px;font-weight:900;">${s.victory ? 'VICTORY!' : 'RUN COMPLETE'}</div>
             <div style="font-size:12px;color:var(--muted);">
-              Overleefd: <b>${this.fmtTime(s.survivedSec)}</b> • Verslagen: <b>${s.kills}</b> • Bosses: <b>${s.bossesKilled}</b>
+              Survived: <b>${this.fmtTime(s.survivedSec)}</b> • Defeated: <b>${s.kills}</b> • Bosses: <b>${s.bossesKilled}</b>
               ${s.maxCombo >= 5 ? ` • Max Combo: <b style="color:#fbbf24;">${s.maxCombo}x</b>` : ''}
             </div>
             <div class="card" style="background:var(--bg-card-2);">
               <div style="font-size:14px;font-weight:900;">🪙 +${this.fmtNum(s.coinsEarned)} Gold • 💎 +${s.gemsEarned} Gems</div>
               <div style="font-size:12px;color:var(--cyan);">📘 +${s.blueprintsEarned} Blueprints • +${s.passXpEarned} Pass XP</div>
-              ${s.evolutionsUnlocked.length > 0 ? `<div style="font-size:11px;color:#fbbf24;font-weight:800;">★ Evoluties: ${s.evolutionsUnlocked.map((e) => this.esc(e)).join(', ')}</div>` : ''}
-              ${s.newGearDrop ? `<div style="font-size:12px;color:${RARITY_META[s.newGearDrop.rarity].color};font-weight:800;">🎁 Nieuw Item: ${s.newGearDrop.name} (${RARITY_META[s.newGearDrop.rarity].label})</div>` : ''}
+              ${s.evolutionsUnlocked.length > 0 ? `<div style="font-size:11px;color:#fbbf24;font-weight:800;">★ Evolutions: ${s.evolutionsUnlocked.map((e) => this.esc(e)).join(', ')}</div>` : ''}
+              ${s.newGearDrop ? `<div style="font-size:12px;color:${RARITY_META[s.newGearDrop.rarity].color};font-weight:800;">🎁 New Gear: ${s.newGearDrop.name} (${RARITY_META[s.newGearDrop.rarity].label})</div>` : ''}
             </div>
             ${
               !s.doubledByAd
-                ? `<button class="btn btn-amber" id="btn-double-loot">📺 Kijk Video → 2x Gold & Gems!</button>`
-                : `<div style="font-size:12px;color:var(--green);font-weight:800;">✓ 2x Loot Geclaimd!</div>`
+                ? `<button class="btn btn-amber" id="btn-double-loot">📺 Watch Video → 2x Gold & Gems!</button>`
+                : `<div style="font-size:12px;color:var(--green);font-weight:800;">✓ 2x Loot Claimed!</div>`
             }
-            <button class="btn btn-primary" id="modal-close">Terug naar Basis</button>
+            <button class="btn btn-primary" id="modal-close">Back to Base</button>
           </div>
         </div>
       `;
@@ -1607,30 +1623,30 @@ class StarforgeApp {
         <div class="modal-backdrop" id="modal-bg">
           <div class="modal-card">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <strong style="font-size:16px;">⚙️ Instellingen & Profiel</strong>
-              <button class="icon-btn" id="modal-close">✕</button>
+              <strong style="font-size:16px;">⚙️ Settings & Profile</strong>
+              <button class="icon-btn" id="modal-close" aria-label="Close">✕</button>
             </div>
-            <label style="font-size:12px;font-weight:800;">Spelersnaam
+            <label style="font-size:12px;font-weight:800;">Player Name
               <input id="in-player-name" value="${this.esc(this.save.playerName)}" style="width:100%;margin-top:4px;padding:8px;border-radius:10px;border:1px solid var(--border);background:var(--bg-card-2);color:#fff;font-weight:700;">
             </label>
             <label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:700;">
-              <span>🔊 Geluidseffecten</span>
+              <span>🔊 Sound Effects</span>
               <input type="checkbox" id="chk-sound" ${this.save.soundEnabled ? 'checked' : ''}>
             </label>
             <label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:700;">
-              <span>🎵 Synth Muziek</span>
+              <span>🎵 Synth Music</span>
               <input type="checkbox" id="chk-music" ${this.save.musicEnabled ? 'checked' : ''}>
             </label>
             <label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:700;">
-              <span>📳 Trilling</span>
+              <span>📳 Vibration</span>
               <input type="checkbox" id="chk-vibe" ${this.save.vibrationEnabled ? 'checked' : ''}>
             </label>
             <label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:700;">
-              <span>💥 Schade-getallen in arena</span>
+              <span>💥 Arena Damage Numbers</span>
               <input type="checkbox" id="chk-dmg" ${this.save.damageNumbersEnabled ? 'checked' : ''}>
             </label>
-            <button class="btn btn-primary" id="btn-save-settings">Opslaan</button>
-            <button class="btn btn-rose" id="btn-reset-save" style="font-size:11px;">Reset Spelvoortgang</button>
+            <button class="btn btn-primary" id="btn-save-settings">Save</button>
+            <button class="btn btn-rose" id="btn-reset-save" style="font-size:11px;">Reset Progress</button>
           </div>
         </div>
       `;
@@ -1697,7 +1713,7 @@ class StarforgeApp {
     this.root.querySelector('#btn-collect-patrol')?.addEventListener('click', () => {
       const p = computePatrolEarnings(this.save);
       if (p.coins <= 0 && p.blueprints <= 0) {
-        this.showToast('Patrol verzamelt automatisch offline Gold!');
+        this.showToast('Patrol automatically collects offline Gold!');
         return;
       }
       this.modal = { kind: 'patrol' };
@@ -1717,7 +1733,7 @@ class StarforgeApp {
       void this.watchRewardedAd('free_boosters', () => {
         this.boosterAdGranted = true;
         this.boosters = { extraWeapon: true, overdriveAtk: true, doubleLuck: true };
-        this.showToast('⚡ Alle 3 Boosters gratis actief voor je volgende run!');
+        this.showToast('⚡ All 3 Boosters active for free on your next run!');
         this.render();
       });
     });
@@ -1767,7 +1783,7 @@ class StarforgeApp {
         this.save.selectedHero = hId;
         saveGame(this.save);
         audio.playPurchaseSuccess();
-        this.showToast(`🦸 ${h.name} ontgrendeld!`);
+        this.showToast(`🦸 ${h.name} unlocked!`);
         this.render();
       });
     });
@@ -1806,7 +1822,7 @@ class StarforgeApp {
       const res = salvageAllCommonGear(this.save);
       if (res.count > 0) {
         audio.playPurchaseSuccess();
-        this.showToast(`♻️ ${res.count}x Common ontmanteld: +${this.fmtNum(res.coins)} 🪙 & +${res.blueprints} 📘`);
+        this.showToast(`♻️ Salvaged ${res.count}x Common: +${this.fmtNum(res.coins)} 🪙 & +${res.blueprints} 📘`);
         this.render();
       }
     });
@@ -1815,7 +1831,7 @@ class StarforgeApp {
       const count = autoMergeAllGear(this.save);
       if (count > 0) {
         audio.playEvoUnlock();
-        this.showToast(`✨ ${count}x Gear samengevoegd naar hogere Rarity!`);
+        this.showToast(`✨ Merged ${count}x Gear to higher Rarity!`);
         this.render();
       }
     });
@@ -1823,7 +1839,7 @@ class StarforgeApp {
     const handleCrate = (type: 'basic' | 'cyber' | 'mythic', count: 1 | 10, useKey: boolean, title: string) => {
       const drops = openCrate(this.save, type, count, useKey);
       if (!drops) {
-        this.showToast('Niet genoeg sleutels of valuta!');
+        this.showToast('Not enough keys or currency!');
         return;
       }
       audio.playChestJackpot();
@@ -1831,12 +1847,12 @@ class StarforgeApp {
       this.render();
     };
 
-    this.root.querySelector('#btn-open-cyber-key')?.addEventListener('click', () => handleCrate('cyber', 1, true, 'Cyber Supply Kist'));
-    this.root.querySelector('#btn-open-cyber-1')?.addEventListener('click', () => handleCrate('cyber', 1, false, 'Cyber Supply Kist'));
+    this.root.querySelector('#btn-open-cyber-key')?.addEventListener('click', () => handleCrate('cyber', 1, true, 'Cyber Supply Chest'));
+    this.root.querySelector('#btn-open-cyber-1')?.addEventListener('click', () => handleCrate('cyber', 1, false, 'Cyber Supply Chest'));
     this.root.querySelector('#btn-open-cyber-10')?.addEventListener('click', () => handleCrate('cyber', 10, false, '10x Cyber Mega Pull!'));
-    this.root.querySelector('#btn-open-mythic')?.addEventListener('click', () => handleCrate('mythic', 1, false, 'Mythic Vault Kist!'));
-    this.root.querySelector('#btn-open-basic-key')?.addEventListener('click', () => handleCrate('basic', 1, true, 'Basis Supply Kist'));
-    this.root.querySelector('#btn-open-basic-coin')?.addEventListener('click', () => handleCrate('basic', 1, false, 'Basis Supply Kist'));
+    this.root.querySelector('#btn-open-mythic')?.addEventListener('click', () => handleCrate('mythic', 1, false, 'Mythic Vault Chest!'));
+    this.root.querySelector('#btn-open-basic-key')?.addEventListener('click', () => handleCrate('basic', 1, true, 'Basic Supply Chest'));
+    this.root.querySelector('#btn-open-basic-coin')?.addEventListener('click', () => handleCrate('basic', 1, false, 'Basic Supply Chest'));
 
     this.root.querySelectorAll<HTMLElement>('[data-talent-id]').forEach((b) => {
       b.addEventListener('click', () => {
@@ -1878,7 +1894,7 @@ class StarforgeApp {
       if (claimed > 0) {
         saveGame(this.save);
         audio.playPurchaseSuccess();
-        this.showToast(`🎁 ${claimed} Pass beloningen in één keer geclaimd!`);
+        this.showToast(`🎁 Claimed ${claimed} Pass rewards!`);
         this.render();
       }
     });
@@ -1926,7 +1942,7 @@ class StarforgeApp {
         this.save.passXp += q.passXp;
         saveGame(this.save);
         audio.playPurchaseSuccess();
-        this.showToast(`Quest voltooid: +${q.gems} 💎 & +${q.coins} 🪙`);
+        this.showToast(`Quest complete: +${q.gems} 💎 & +${q.coins} 🪙`);
         this.render();
       });
     });
@@ -1955,7 +1971,7 @@ class StarforgeApp {
     this.root.querySelector('#btn-restore-purchases')?.addEventListener('click', () => {
       void billing.restorePurchases().then((owned) => {
         const restored = applyOwnedEntitledSkus(this.save, owned);
-        this.showToast(restored.length > 0 ? `Hersteld: ${restored.join(', ')}` : 'Alle aankopen zijn up-to-date');
+        this.showToast(restored.length > 0 ? `Restored: ${restored.join(', ')}` : 'All purchases are up to date');
         this.render();
       });
     });
@@ -1977,7 +1993,7 @@ class StarforgeApp {
         this.save.adGemsUsedToday += 1;
         this.save.gems += ADMOB_CONFIG.dailyAdGemsAmount;
         saveGame(this.save);
-        this.showToast(`💎 +${ADMOB_CONFIG.dailyAdGemsAmount} Gems ontvangen!`);
+        this.showToast(`💎 +${ADMOB_CONFIG.dailyAdGemsAmount} Gems received!`);
         this.render();
       });
     });
@@ -1988,7 +2004,7 @@ class StarforgeApp {
         this.save.adKeysUsedToday += 1;
         this.save.cyberKeys += 1;
         saveGame(this.save);
-        this.showToast('🔑 +1 Cyber Supply Sleutel ontvangen!');
+        this.showToast('🔑 +1 Cyber Supply Key received!');
         this.render();
       });
     });
@@ -2032,7 +2048,7 @@ class StarforgeApp {
       if (this.modal?.kind === 'lucky_wheel') {
         this.modal = { kind: 'lucky_wheel', rotation: nextRot, spinning: false, lastResult: slice };
         audio.playPurchaseSuccess();
-        this.showToast(`🎡 Gewonnen: ${slice.label}!`);
+        this.showToast(`🎡 Won: ${slice.label}!`);
         this.render();
       }
     }, 3250);
@@ -2070,7 +2086,7 @@ class StarforgeApp {
     this.root.querySelector('#btn-patrol-1x')?.addEventListener('click', () => {
       const got = collectPatrolEarnings(this.save, 1);
       audio.playPurchaseSuccess();
-      this.showToast(`🛸 Geïnd: +${this.fmtNum(got.coins)} Gold & +${got.blueprints} Blueprints!`);
+      this.showToast(`🛸 Collected: +${this.fmtNum(got.coins)} Gold & +${got.blueprints} Blueprints!`);
       this.modal = null;
       this.render();
     });
@@ -2078,7 +2094,7 @@ class StarforgeApp {
     this.root.querySelector('#btn-patrol-2x')?.addEventListener('click', () => {
       void this.watchRewardedAd('patrol_2x', () => {
         const got = collectPatrolEarnings(this.save, 2);
-        this.showToast(`🛸 2x Geïnd: +${this.fmtNum(got.coins)} Gold & +${got.blueprints} Blueprints!`);
+        this.showToast(`🛸 2x Collected: +${this.fmtNum(got.coins)} Gold & +${got.blueprints} Blueprints!`);
         this.modal = null;
         this.render();
       });
@@ -2108,7 +2124,7 @@ class StarforgeApp {
         this.save.gems += 25;
         saveGame(this.save);
         audio.playPurchaseSuccess();
-        this.showToast('📖 Codex Bonus: +25 💎 ontvangen!');
+        this.showToast('📖 Codex Bonus: +25 💎 claimed!');
         this.render();
       });
     });
@@ -2122,7 +2138,7 @@ class StarforgeApp {
       this.save.cyberKeys += r.cyberKeys;
       saveGame(this.save);
       audio.playPurchaseSuccess();
-      this.showToast(`📅 Dag ${r.day} geclaimd: ${r.label}`);
+      this.showToast(`📅 Day ${r.day} claimed: ${r.label}`);
       this.modal = null;
       this.render();
     });
@@ -2151,7 +2167,7 @@ class StarforgeApp {
       const merged = mergeGearTriplet(this.save, this.modal.uid);
       if (merged) {
         audio.playEvoUnlock();
-        this.showToast(`✨ Gemerged naar ${RARITY_META[merged.rarity].label}!`);
+        this.showToast(`✨ Merged to ${RARITY_META[merged.rarity].label}!`);
         this.modal = { kind: 'gear_detail', uid: merged.uid };
         this.render();
       }
@@ -2162,7 +2178,7 @@ class StarforgeApp {
       const payout = salvageGearItem(this.save, this.modal.uid);
       if (payout) {
         audio.playPurchaseSuccess();
-        this.showToast(`♻️ Ontmanteld: +${this.fmtNum(payout.coins)} 🪙 & +${payout.blueprints} 📘`);
+        this.showToast(`♻️ Salvaged: +${this.fmtNum(payout.coins)} 🪙 & +${payout.blueprints} 📘`);
         this.modal = null;
         this.render();
       }
@@ -2193,7 +2209,7 @@ class StarforgeApp {
       audio.configure(this.save.soundEnabled, this.save.musicEnabled);
       saveGame(this.save);
       this.modal = null;
-      this.showToast('Instellingen opgeslagen ✓');
+      this.showToast('Settings saved ✓');
       this.render();
     });
 
@@ -2201,7 +2217,7 @@ class StarforgeApp {
       this.save = createDefaultSave();
       saveGame(this.save);
       this.modal = null;
-      this.showToast('Voortgang gereset');
+      this.showToast('Progress reset');
       this.render();
     });
   }

@@ -331,19 +331,27 @@ export class SurvivorEngine {
 
   private onPointerDown = (e: PointerEvent) => {
     if (this.paused || this.ended) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const localX = e.clientX - rect.left;
+    const localY = e.clientY - rect.top;
+    // Deadzone over bottom-right Dash / Ultimate controls (170x170px)
+    if (localX >= rect.width - 170 && localY >= rect.height - 170) {
+      return;
+    }
     audio.unlock();
     this.touchActive = true;
-    this.touchStartX = e.clientX;
-    this.touchStartY = e.clientY;
-    this.touchCurX = e.clientX;
-    this.touchCurY = e.clientY;
+    this.touchStartX = localX;
+    this.touchStartY = localY;
+    this.touchCurX = localX;
+    this.touchCurY = localY;
     this.updateJoystickVector();
   };
 
   private onPointerMove = (e: PointerEvent) => {
     if (!this.touchActive) return;
-    this.touchCurX = e.clientX;
-    this.touchCurY = e.clientY;
+    const rect = this.canvas.getBoundingClientRect();
+    this.touchCurX = e.clientX - rect.left;
+    this.touchCurY = e.clientY - rect.top;
     this.updateJoystickVector();
   };
 
@@ -782,7 +790,7 @@ export class SurvivorEngine {
     if (computedThreat > this.threatLevel) {
       this.threatLevel = computedThreat;
       const pct = this.getEnemyPowerPct();
-      this.cb.onWaveBanner(`⚠️ GOLF ${this.threatLevel}: Monsters zijn nu ${pct}% sterker & sneller!`);
+      this.cb.onWaveBanner(`⚠️ WAVE ${this.threatLevel}: Enemies are now ${pct}% stronger & faster!`);
     }
 
     if (
@@ -920,7 +928,7 @@ export class SurvivorEngine {
       const kind: Enemy['kind'] = i % 4 === 0 ? 'dasher' : i % 5 === 0 ? 'sentinel' : 'swarmer';
       this.spawnEnemy(kind, this.px + Math.cos(a) * dist, this.py + Math.sin(a) * dist);
     }
-    this.cb.onWaveBanner(`💀 ZWERMAANVAL! (${surgeCount} woeste monsters!)`);
+    this.cb.onWaveBanner(`💀 SWARM SURGE! (${surgeCount} fierce enemies!)`);
   }
 
   private updateSpawner(dt: number): void {

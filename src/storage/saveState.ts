@@ -714,7 +714,7 @@ export function applyPurchaseReward(
   sku: string
 ): { summaryText: string; gemsAdded: number; coinsAdded: number } {
   const def = SHOP_SKUS.find((s) => s.sku === sku);
-  if (!def) return { summaryText: 'Onbekend product', gemsAdded: 0, coinsAdded: 0 };
+  if (!def) return { summaryText: 'Unknown product', gemsAdded: 0, coinsAdded: 0 };
 
   let gemsAdded = 0;
   let coinsAdded = 0;
@@ -764,11 +764,11 @@ export function applyPurchaseReward(
 
   const parts: string[] = [];
   if (gemsAdded > 0) parts.push(`+${gemsAdded} Gems`);
-  if (coinsAdded > 0) parts.push(`+${coinsAdded.toLocaleString()} Gold`);
+  if (coinsAdded > 0) parts.push(`+${coinsAdded.toLocaleString('en-US')} Gold`);
   if (def.keys) parts.push(`+${def.keys}x Cyber Key`);
-  if (def.grantsNoAds) parts.push('Ad-Free Actief');
-  if (def.grantsPass) parts.push('Season Pass Ontgrendeld');
-  if (def.grantsVip) parts.push('VIP Club 30 Dagen');
+  if (def.grantsNoAds) parts.push('No Ads Active');
+  if (def.grantsPass) parts.push('Season Pass Unlocked');
+  if (def.grantsVip) parts.push('VIP Club 30 Days');
   if (def.grantsStarterGear) parts.push('Epic Plasma Katana');
   return { summaryText: parts.join(' • '), gemsAdded, coinsAdded };
 }
@@ -778,7 +778,7 @@ export function applyOwnedEntitledSkus(save: PlayerSave, ownedSkus: string[]): s
   for (const sku of ownedSkus) {
     if (sku === 'starforge_no_ads' && !save.noAdsForever) {
       save.noAdsForever = true;
-      restored.push('Geen Reclame');
+      restored.push('No Ads Forever');
     } else if (sku === 'starforge_season_pass' && !save.passPremiumUnlocked) {
       save.passPremiumUnlocked = true;
       restored.push('Season Pass');
