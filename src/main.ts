@@ -109,6 +109,8 @@ class StarforgeApp {
     | { kind: 'pause' } = null;
   private bossBannerText: string | null = null;
   private waveBannerText: string | null = null;
+  private bossBannerTimer: number | null = null;
+  private waveBannerTimer: number | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -287,6 +289,17 @@ class StarforgeApp {
     this.boosters = { extraWeapon: false, overdriveAtk: false, doubleLuck: false };
     this.boosterAdGranted = false;
 
+    if (this.bossBannerTimer !== null) {
+      window.clearTimeout(this.bossBannerTimer);
+      this.bossBannerTimer = null;
+    }
+    if (this.waveBannerTimer !== null) {
+      window.clearTimeout(this.waveBannerTimer);
+      this.waveBannerTimer = null;
+    }
+    this.engine?.destroy();
+    this.engine = null;
+
     this.inBattle = true;
     this.battleModal = null;
     this.bossBannerText = null;
@@ -323,7 +336,9 @@ class StarforgeApp {
         onBossBanner: (bossName) => {
           this.bossBannerText = `⚠️ BOSS INCOMING: ${bossName}`;
           this.renderBattleOverlays();
-          window.setTimeout(() => {
+          if (this.bossBannerTimer !== null) window.clearTimeout(this.bossBannerTimer);
+          this.bossBannerTimer = window.setTimeout(() => {
+            this.bossBannerTimer = null;
             this.bossBannerText = null;
             this.renderBattleOverlays();
           }, 2600);
@@ -331,7 +346,9 @@ class StarforgeApp {
         onWaveBanner: (message) => {
           this.waveBannerText = message;
           this.renderBattleOverlays();
-          window.setTimeout(() => {
+          if (this.waveBannerTimer !== null) window.clearTimeout(this.waveBannerTimer);
+          this.waveBannerTimer = window.setTimeout(() => {
+            this.waveBannerTimer = null;
             if (this.waveBannerText === message) {
               this.waveBannerText = null;
               this.renderBattleOverlays();
@@ -343,6 +360,14 @@ class StarforgeApp {
           this.renderBattleOverlays();
         },
         onFinish: (result) => {
+          if (this.bossBannerTimer !== null) {
+            window.clearTimeout(this.bossBannerTimer);
+            this.bossBannerTimer = null;
+          }
+          if (this.waveBannerTimer !== null) {
+            window.clearTimeout(this.waveBannerTimer);
+            this.waveBannerTimer = null;
+          }
           this.engine?.destroy();
           this.engine = null;
           this.inBattle = false;
@@ -1300,6 +1325,14 @@ class StarforgeApp {
   private bindBattleControlEvents(): void {
     this.root.querySelector('#btn-dash')?.addEventListener('click', () => this.engine?.triggerDash());
     this.root.querySelector('#btn-ult')?.addEventListener('click', () => this.engine?.triggerUltimate());
+    this.root.querySelector('#battle-hud-top')?.addEventListener('click', (ev) => {
+      const target = ev.target as HTMLElement | null;
+      if (target?.closest('#btn-battle-pause')) {
+        this.engine?.setPaused(true);
+        this.battleModal = { kind: 'pause' };
+        this.renderBattleOverlays();
+      }
+    });
   }
 
   private renderModalHtml(): string {

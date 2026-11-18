@@ -10,6 +10,8 @@ class AudioEngine {
   private stepIdx = 0;
   private xpPitchStep = 0;
   private lastXpAt = 0;
+  private lastHitAt = 0;
+  private lastXpSoundAt = 0;
 
   private ensureCtx(): AudioContext | null {
     if (!this.soundOn && !this.musicOn) return null;
@@ -73,15 +75,20 @@ class AudioEngine {
   }
 
   playHit(isCrit = false): void {
+    const now = performance.now();
+    if (now - this.lastHitAt < (isCrit ? 28 : 48)) return;
+    this.lastHitAt = now;
     if (isCrit) {
-      this.playTone(980, 0.07, 'sawtooth', 0.08, 420);
+      this.playTone(980, 0.07, 'sawtooth', 0.075, 420);
     } else {
-      this.playTone(220, 0.045, 'triangle', 0.05, 110);
+      this.playTone(220, 0.045, 'triangle', 0.045, 110);
     }
   }
 
   playXpPickup(): void {
     const now = performance.now();
+    if (now - this.lastXpSoundAt < 32) return;
+    this.lastXpSoundAt = now;
     if (now - this.lastXpAt < 260) {
       this.xpPitchStep = Math.min(14, this.xpPitchStep + 1);
     } else {
@@ -90,7 +97,7 @@ class AudioEngine {
     this.lastXpAt = now;
     const scale = [523, 587, 659, 698, 784, 880, 988, 1046, 1175, 1318, 1397, 1568, 1760, 1976, 2093];
     const freq = scale[this.xpPitchStep] || 880;
-    this.playTone(freq, 0.065, 'sine', 0.065, freq * 1.12);
+    this.playTone(freq, 0.065, 'sine', 0.06, freq * 1.12);
   }
 
   playMagnetSweep(): void {

@@ -161,6 +161,10 @@ export function createDefaultSave(): PlayerSave {
   };
 }
 
+function safeNum(v: unknown, fallback: number, min = 0): number {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.max(min, v) : fallback;
+}
+
 export function loadSave(): PlayerSave {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -171,20 +175,50 @@ export function loadSave(): PlayerSave {
     }
     const parsed = JSON.parse(raw) as Partial<PlayerSave>;
     const base = createDefaultSave();
+    const rawInv = Array.isArray(parsed.inventory) && parsed.inventory.length > 0 ? parsed.inventory : base.inventory;
+    const cleanInv = rawInv.filter(
+      (g): g is GearItem =>
+        Boolean(g && typeof g.uid === 'string' && typeof g.templateId === 'string' && g.rarity in RARITY_META)
+    ).map((g) => ({
+      ...g,
+      level: Math.max(1, Math.min(RARITY_META[g.rarity].maxLv, Math.floor(safeNum(g.level, 1, 1)))),
+    }));
+    const inv = cleanInv.length > 0 ? cleanInv : base.inventory;
+    const invUids = new Set(inv.map((g) => g.uid));
+    const rawEquipped = { ...base.equipped, ...(parsed.equipped || {}) };
+    for (const sl of Object.keys(rawEquipped) as GearSlot[]) {
+      const uid = rawEquipped[sl];
+      if (uid && !invUids.has(uid)) {
+        rawEquipped[sl] = null;
+      }
+    }
+
     const merged: PlayerSave = {
       ...base,
       ...parsed,
+      accountLevel: Math.floor(safeNum(parsed.accountLevel, base.accountLevel, 1)),
+      accountXp: safeNum(parsed.accountXp, base.accountXp, 0),
+      coins: Math.floor(safeNum(parsed.coins, base.coins, 0)),
+      gems: Math.floor(safeNum(parsed.gems, base.gems, 0)),
+      blueprints: Math.floor(safeNum(parsed.blueprints, base.blueprints, 0)),
+      basicKeys: Math.floor(safeNum(parsed.basicKeys, base.basicKeys, 0)),
+      cyberKeys: Math.floor(safeNum(parsed.cyberKeys, base.cyberKeys, 0)),
+      reviveTokens: Math.floor(safeNum(parsed.reviveTokens, base.reviveTokens, 0)),
+      rerollTokens: Math.floor(safeNum(parsed.rerollTokens, base.rerollTokens, 0)),
+      piggyGems: Math.floor(safeNum(parsed.piggyGems, base.piggyGems, 0)),
+      highestChapterUnlocked: Math.min(6, Math.max(1, Math.floor(safeNum(parsed.highestChapterUnlocked, 1, 1)))),
+      selectedHero: HEROES.some((h) => h.id === parsed.selectedHero) ? parsed.selectedHero! : base.selectedHero,
       selectedWeaponStyle:
         parsed.selectedWeaponStyle === 'staff' || parsed.selectedWeaponStyle === 'bow'
           ? parsed.selectedWeaponStyle
           : 'sword',
       heroLevels: { ...base.heroLevels, ...(parsed.heroLevels || {}) },
-      equipped: { ...base.equipped, ...(parsed.equipped || {}) },
+      equipped: rawEquipped,
       talents: { ...(parsed.talents || {}) },
       quests: { ...base.quests, ...(parsed.quests || {}) },
       discoveredEvos: Array.isArray(parsed.discoveredEvos) ? parsed.discoveredEvos : [],
       claimedEvoCodex: Array.isArray(parsed.claimedEvoCodex) ? parsed.claimedEvoCodex : [],
-      inventory: Array.isArray(parsed.inventory) && parsed.inventory.length > 0 ? parsed.inventory : base.inventory,
+      inventory: inv,
       leaderboard: Array.isArray(parsed.leaderboard) && parsed.leaderboard.length > 0 ? parsed.leaderboard : base.leaderboard,
     };
     return ensureDailyState(merged);
