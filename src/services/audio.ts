@@ -16,15 +16,19 @@ class AudioEngine {
   private ensureCtx(): AudioContext | null {
     if (!this.soundOn && !this.musicOn) return null;
     if (typeof window === 'undefined') return null;
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return null;
-    if (!this.ctx) {
-      this.ctx = new AudioCtx();
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return null;
+      if (!this.ctx) {
+        this.ctx = new AudioCtx();
+      }
+      if (this.ctx.state === 'suspended') {
+        void this.ctx.resume().catch(() => undefined);
+      }
+      return this.ctx;
+    } catch {
+      return null;
     }
-    if (this.ctx.state === 'suspended') {
-      void this.ctx.resume().catch(() => undefined);
-    }
-    return this.ctx;
   }
 
   configure(soundEnabled: boolean, musicEnabled: boolean): void {
@@ -51,23 +55,27 @@ class AudioEngine {
     const ctx = this.ensureCtx();
     if (!ctx) return;
 
-    const now = ctx.currentTime + delaySec;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, now);
-    if (endFreq && endFreq !== freq) {
-      osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + durationSec);
+    try {
+      const now = ctx.currentTime + delaySec;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(Math.max(20, freq), now);
+      if (endFreq && endFreq !== freq) {
+        osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + durationSec);
+      }
+
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.001, volume), now + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + durationSec);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + durationSec + 0.02);
+    } catch {
+      // Ignore WebAudio scheduling issues on restricted devices
     }
-
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(volume, now + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + durationSec);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + durationSec + 0.02);
   }
 
   playTap(): void {

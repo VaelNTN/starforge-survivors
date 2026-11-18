@@ -193,6 +193,16 @@ export function loadSave(): PlayerSave {
       }
     }
 
+    const rawHeroLevels = { ...base.heroLevels, ...(parsed.heroLevels || {}) };
+    const cleanHeroLevels: Record<string, number> = {};
+    for (const [k, v] of Object.entries(rawHeroLevels)) {
+      cleanHeroLevels[k] = Math.floor(safeNum(v, 1, 1));
+    }
+    const cleanTalents: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed.talents || {})) {
+      cleanTalents[k] = Math.floor(safeNum(v, 0, 0));
+    }
+
     const merged: PlayerSave = {
       ...base,
       ...parsed,
@@ -212,9 +222,9 @@ export function loadSave(): PlayerSave {
         parsed.selectedWeaponStyle === 'staff' || parsed.selectedWeaponStyle === 'bow'
           ? parsed.selectedWeaponStyle
           : 'sword',
-      heroLevels: { ...base.heroLevels, ...(parsed.heroLevels || {}) },
+      heroLevels: cleanHeroLevels as PlayerSave['heroLevels'],
       equipped: rawEquipped,
-      talents: { ...(parsed.talents || {}) },
+      talents: cleanTalents,
       quests: { ...base.quests, ...(parsed.quests || {}) },
       discoveredEvos: Array.isArray(parsed.discoveredEvos) ? parsed.discoveredEvos : [],
       claimedEvoCodex: Array.isArray(parsed.claimedEvoCodex) ? parsed.claimedEvoCodex : [],

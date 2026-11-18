@@ -12,6 +12,23 @@ import {
 } from '../types/game';
 import { createGearItem } from '../storage/saveState';
 
+function roundedRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+): void {
+  const rad = Math.max(0, Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2));
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+
 export interface DraftOption {
   kind: 'weapon' | 'passive' | 'evo' | 'heal_coins';
   id: string;
@@ -50,7 +67,7 @@ export interface HudSnapshot {
 interface Enemy {
   id: number;
   kind: 'swarmer' | 'dasher' | 'sentinel' | 'spitter' | 'splitter' | 'goblin' | 'elite' | 'boss';
-  tier: 0 | 1 | 2; // 0 = normaal, 1 = Versterkt, 2 = Apex Mutant
+  tier: 0 | 1 | 2; // 0 = normal, 1 = Empowered, 2 = Apex Mutant
   animSeed: number;
   x: number;
   y: number;
@@ -444,11 +461,11 @@ export class SurvivorEngine {
   }
 
   resize = (): void => {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
     const rect = this.canvas.getBoundingClientRect();
     this.dpr = dpr;
-    this.width = Math.max(320, rect.width || window.innerWidth);
-    this.height = Math.max(480, rect.height || window.innerHeight);
+    this.width = Math.max(320, Math.round(rect.width) || window.innerWidth || 390);
+    this.height = Math.max(480, Math.round(rect.height) || window.innerHeight || 780);
     this.canvas.width = Math.round(this.width * dpr);
     this.canvas.height = Math.round(this.height * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -459,6 +476,8 @@ export class SurvivorEngine {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    this.resize();
+    this.emitHud();
     this.lastTs = performance.now();
     audio.startMusicLoop();
     const tick = (now: number) => {
@@ -468,15 +487,26 @@ export class SurvivorEngine {
       }
       const dt = Math.min(0.05, Math.max(0.001, (now - this.lastTs) / 1000));
       this.lastTs = now;
-      if (!this.paused) {
-        this.update(dt);
+      try {
+        const cw = this.canvas.clientWidth;
+        const ch = this.canvas.clientHeight;
+        if (cw >= 320 && ch >= 480 && (Math.abs(cw - this.width) > 1 || Math.abs(ch - this.height) > 1)) {
+          this.resize();
+        }
+        if (!this.paused) {
+          this.update(dt);
+        }
+        if (this.ended) {
+          this.rafId = null;
+          return;
+        }
+        this.render();
+      } catch (err) {
+        console.error('SurvivorEngine frame error:', err);
       }
-      if (this.ended) {
-        this.rafId = null;
-        return;
+      if (!this.ended) {
+        this.rafId = requestAnimationFrame(tick);
       }
-      this.render();
-      this.rafId = requestAnimationFrame(tick);
     };
     this.rafId = requestAnimationFrame(tick);
   }
@@ -629,7 +659,7 @@ export class SurvivorEngine {
           kind: 'evo',
           id: wId,
           name: def.evoName,
-          subtitle: `EVOLUTIE! ${def.evoDesc}`,
+          subtitle: `EVOLUTION! ${def.evoDesc}`,
           currentLv: 5,
           nextLv: 6,
           color: '#fbbf24',
@@ -658,7 +688,7 @@ export class SurvivorEngine {
           kind: 'weapon',
           id: w.id,
           name: w.name,
-          subtitle: `NIEUW: ${w.shortDesc}`,
+          subtitle: `NEW: ${w.shortDesc}`,
           currentLv: 0,
           nextLv: 1,
           color: w.color,
@@ -684,7 +714,7 @@ export class SurvivorEngine {
           kind: 'passive',
           id: p.id,
           name: p.name,
-          subtitle: `NIEUW: ${p.perLevelLabel}`,
+          subtitle: `NEW: ${p.perLevelLabel}`,
           currentLv: 0,
           nextLv: 1,
           color: p.color,
@@ -701,8 +731,8 @@ export class SurvivorEngine {
       picked.push({
         kind: 'heal_coins',
         id: 'heal_gold',
-        name: 'Nano-Herstel & Gold',
-        subtitle: 'Herstel +35% HP & pak +150 Gold',
+        name: 'Nano-Repair & Gold',
+        subtitle: 'Restore +35% HP & grab +150 Gold',
         currentLv: 0,
         nextLv: 1,
         color: '#10b981',
@@ -2331,7 +2361,7 @@ export class SurvivorEngine {
       ctx.fillStyle = this.hero.accentColor;
       ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.roundRect(a.x - 9, a.y - 16, 18, 28, 6);
+      roundedRectPath(ctx, a.x - 9, a.y - 16, 18, 28, 6);
       ctx.fill();
       ctx.stroke();
       ctx.beginPath();
@@ -2725,7 +2755,7 @@ export class SurvivorEngine {
       ctx.strokeStyle = this.hero.accentColor;
       ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.roundRect(xOff - 3.5, ly, 7, 10, 3);
+      roundedRectPath(ctx, xOff - 3.5, ly, 7, 10, 3);
       ctx.fill();
       ctx.stroke();
       // Knee guard plate
@@ -2743,14 +2773,14 @@ export class SurvivorEngine {
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.roundRect(-10, -7 - bob, 20, 17, 5);
+    roundedRectPath(ctx, -10, -7 - bob, 20, 17, 5);
     ctx.fill();
     ctx.stroke();
 
     // Layered chestplate, reactor core & energy belt
     ctx.fillStyle = this.hero.accentColor;
     ctx.beginPath();
-    ctx.roundRect(-7.5, -5.2 - bob, 15, 9.2, 3);
+    roundedRectPath(ctx, -7.5, -5.2 - bob, 15, 9.2, 3);
     ctx.fill();
     ctx.fillStyle = '#e0f2fe';
     ctx.beginPath();
@@ -2823,7 +2853,7 @@ export class SurvivorEngine {
     // Visor & glowing eyes + glass glint
     ctx.fillStyle = '#e0f2fe';
     ctx.beginPath();
-    ctx.roundRect(dirX * 2 - 6, headY - 3, 12, 5.5, 2.5);
+    roundedRectPath(ctx, dirX * 2 - 6, headY - 3, 12, 5.5, 2.5);
     ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
     ctx.fillRect(dirX * 2 - 4.5, headY - 2.3, 4.5, 1.4);
@@ -3113,7 +3143,7 @@ export class SurvivorEngine {
       ctx.fill();
       ctx.fillStyle = '#0f172a';
       ctx.beginPath();
-      ctx.roundRect(-r * 0.48, r * 0.16, r * 0.96, r * 0.38, 6);
+      roundedRectPath(ctx, -r * 0.48, r * 0.16, r * 0.96, r * 0.38, 6);
       ctx.fill();
       ctx.fillStyle = '#ffffff';
       for (let t = -3; t <= 3; t++) {
@@ -3132,7 +3162,7 @@ export class SurvivorEngine {
       ctx.arc(r * 0.85, -waggle * 3, r * 0.32, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
-      ctx.roundRect(-r * 0.8, -r * 0.78, r * 1.6, r * 1.56, r * 0.55);
+      roundedRectPath(ctx, -r * 0.8, -r * 0.78, r * 1.6, r * 1.56, r * 0.55);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = '#fef08a';
@@ -3169,7 +3199,7 @@ export class SurvivorEngine {
       ctx.fill();
       ctx.stroke();
       ctx.beginPath();
-      ctx.roundRect(-r * 0.85, -r * 0.82, r * 1.7, r * 1.64, 7);
+      roundedRectPath(ctx, -r * 0.85, -r * 0.82, r * 1.7, r * 1.64, 7);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = '#0f172a';

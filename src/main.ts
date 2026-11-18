@@ -421,6 +421,17 @@ class StarforgeApp {
 
   private render(): void {
     if (this.inBattle) {
+      const existingCanvas = this.root.querySelector<HTMLCanvasElement>('#game-canvas');
+      if (existingCanvas) {
+        const globalModalSlot = this.root.querySelector<HTMLElement>('#battle-global-modal');
+        if (globalModalSlot) {
+          globalModalSlot.innerHTML = this.modal?.kind === 'ad_preview' ? this.renderModalHtml() : '';
+        }
+        this.renderBattleOverlays();
+        this.bindModalEvents();
+        return;
+      }
+
       this.root.innerHTML = `
         <div class="app-root">
           <div class="battle-stage">
@@ -432,7 +443,7 @@ class StarforgeApp {
             </div>
             <div id="battle-overlays"></div>
           </div>
-          ${this.modal?.kind === 'ad_preview' ? this.renderModalHtml() : ''}
+          <div id="battle-global-modal">${this.modal?.kind === 'ad_preview' ? this.renderModalHtml() : ''}</div>
         </div>
       `;
       this.bindBattleControlEvents();
