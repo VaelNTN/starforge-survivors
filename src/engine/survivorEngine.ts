@@ -2705,27 +2705,35 @@ export class SurvivorEngine {
     ctx.arc(0, -2 - bob * 0.5, 22, 0, Math.PI * 2);
     ctx.fill();
 
-    // Flowing cape
-    const capeWave = this.isMoving ? Math.sin(this.walkPhase * 1.1) * 4 : Math.sin(this.elapsedSec * 2.5) * 1.5;
+    // Flowing layered cape with rim trim
+    const capeWave = this.isMoving ? Math.sin(this.walkPhase * 1.1) * 5.2 : Math.sin(this.elapsedSec * 2.5) * 1.8;
     ctx.fillStyle = this.hero.secondaryColor;
     ctx.beginPath();
     ctx.moveTo(-4 * dirX, -6 - bob);
-    ctx.lineTo(-15 * dirX + capeWave * 0.4, 15 - bob * 0.5);
-    ctx.lineTo(3 * dirX, 14 - bob * 0.5);
+    ctx.quadraticCurveTo(-11 * dirX + capeWave * 0.25, 5 - bob * 0.7, -16 * dirX + capeWave * 0.5, 16 - bob * 0.4);
+    ctx.lineTo(3 * dirX + capeWave * 0.15, 15 - bob * 0.4);
     ctx.closePath();
     ctx.fill();
+    ctx.strokeStyle = this.hero.accentColor;
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
 
-    // Boots
+    // Articulated boots + knee greaves
     const drawBoot = (xOff: number, swing: number) => {
+      const ly = 8 + swing * 0.55 - bob * 0.3;
       ctx.fillStyle = '#0f172a';
       ctx.strokeStyle = this.hero.accentColor;
       ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.roundRect(xOff - 3.5, 8 + swing * 0.55 - bob * 0.3, 7, 10, 3);
+      ctx.roundRect(xOff - 3.5, ly, 7, 10, 3);
       ctx.fill();
       ctx.stroke();
+      // Knee guard plate
+      ctx.fillStyle = this.hero.accentColor;
+      ctx.fillRect(xOff - 2.6, ly + 1.5, 5.2, 2.5);
+      // Boot toe cap
       ctx.fillStyle = this.hero.secondaryColor;
-      ctx.fillRect(xOff - 3 + dirX * 1.5, 14 + swing * 0.55 - bob * 0.3, 6, 4);
+      ctx.fillRect(xOff - 3 + dirX * 1.5, ly + 6, 6, 4);
     };
     drawBoot(-5, walkSwing);
     drawBoot(5, -walkSwing);
@@ -2739,39 +2747,47 @@ export class SurvivorEngine {
     ctx.fill();
     ctx.stroke();
 
-    // Chestplate & energy belt
+    // Layered chestplate, reactor core & energy belt
     ctx.fillStyle = this.hero.accentColor;
     ctx.beginPath();
-    ctx.roundRect(-7, -5 - bob, 14, 9, 3);
+    ctx.roundRect(-7.5, -5.2 - bob, 15, 9.2, 3);
+    ctx.fill();
+    ctx.fillStyle = '#e0f2fe';
+    ctx.beginPath();
+    ctx.arc(0, -1 - bob, 2.2, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(-9, 5 - bob, 18, 3);
     ctx.fillStyle = '#fbbf24';
-    ctx.fillRect(-2, 4.5 - bob, 4, 4);
+    ctx.fillRect(-2.4, 4.4 - bob, 4.8, 4.2);
 
-    // Pauldrons
+    // Layered pauldrons with rim highlights
     ctx.fillStyle = this.hero.accentColor;
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 1.3;
     ctx.beginPath();
-    ctx.arc(-10, -4 - bob, 4.2, 0, Math.PI * 2);
-    ctx.arc(10, -4 - bob, 4.2, 0, Math.PI * 2);
+    ctx.arc(-10.2, -4 - bob, 4.5, 0, Math.PI * 2);
+    ctx.arc(10.2, -4 - bob, 4.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    // Back arm
+    // Back arm & gauntlet
     ctx.fillStyle = this.hero.secondaryColor;
     ctx.beginPath();
     ctx.arc(-11 * dirX, 2 - bob - walkSwing * 0.35, 3.6, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = this.hero.accentColor;
+    ctx.beginPath();
+    ctx.arc(-11.5 * dirX, 3.5 - bob - walkSwing * 0.35, 2.2, 0, Math.PI * 2);
+    ctx.fill();
 
-    // Head & Helmet
+    // Head & Helmet with glossy visor glint
     const headY = -14 - bob;
     ctx.fillStyle = '#0f172a';
     ctx.strokeStyle = this.hero.accentColor;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(0, headY, 9.5, 0, Math.PI * 2);
+    ctx.arc(0, headY, 9.6, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
@@ -2780,39 +2796,41 @@ export class SurvivorEngine {
     if (this.hero.id === 'kael') {
       ctx.beginPath();
       ctx.moveTo(-8 * dirX, headY - 4);
-      ctx.lineTo(-16 * dirX - capeWave * 0.5, headY - 8);
+      ctx.lineTo(-17 * dirX - capeWave * 0.55, headY - 8.5);
       ctx.lineTo(-13 * dirX, headY - 1);
       ctx.closePath();
       ctx.fill();
     } else if (this.hero.id === 'nova') {
       ctx.beginPath();
       ctx.moveTo(-7, headY - 7);
-      ctx.lineTo(0, headY - 16);
+      ctx.lineTo(0, headY - 16.5);
       ctx.lineTo(7, headY - 7);
       ctx.closePath();
       ctx.fill();
     } else if (this.hero.id === 'titan') {
-      ctx.fillRect(-7, headY - 11, 14, 4);
+      ctx.fillRect(-7.5, headY - 11.5, 15, 4.2);
     } else {
       ctx.beginPath();
       ctx.moveTo(-8, headY - 5);
-      ctx.lineTo(-11, headY - 14);
+      ctx.lineTo(-11.5, headY - 14.5);
       ctx.lineTo(-3, headY - 8);
       ctx.moveTo(8, headY - 5);
-      ctx.lineTo(11, headY - 14);
+      ctx.lineTo(11.5, headY - 14.5);
       ctx.lineTo(3, headY - 8);
       ctx.fill();
     }
 
-    // Visor & eyes
+    // Visor & glowing eyes + glass glint
     ctx.fillStyle = '#e0f2fe';
     ctx.beginPath();
     ctx.roundRect(dirX * 2 - 6, headY - 3, 12, 5.5, 2.5);
     ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillRect(dirX * 2 - 4.5, headY - 2.3, 4.5, 1.4);
     ctx.fillStyle = this.hero.secondaryColor;
     ctx.beginPath();
-    ctx.arc(dirX * 2 - 2.5, headY - 0.2, 1.5, 0, Math.PI * 2);
-    ctx.arc(dirX * 2 + 2.5, headY - 0.2, 1.5, 0, Math.PI * 2);
+    ctx.arc(dirX * 2 - 2.5, headY - 0.1, 1.5, 0, Math.PI * 2);
+    ctx.arc(dirX * 2 + 2.5, headY - 0.1, 1.5, 0, Math.PI * 2);
     ctx.fill();
 
     // Weapon in hand
@@ -2823,34 +2841,52 @@ export class SurvivorEngine {
     if (this.weaponStyle === 'sword') {
       const swingOffset = this.attackAnimTimer > 0 ? -1.35 + atkFrac * 2.7 : -0.35 * dirX;
       ctx.rotate(this.weaponAimAngle + swingOffset);
+      // Forearm + gauntlet holding hilt
+      ctx.fillStyle = this.hero.secondaryColor;
+      ctx.fillRect(0, -2.5, 9, 5);
       ctx.fillStyle = '#fde68a';
       ctx.beginPath();
       ctx.arc(10, 0, 3.4, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#78350f';
       ctx.fillRect(6, -1.8, 7, 3.6);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(12, -6.5, 3, 13);
-      ctx.fillStyle = 'rgba(56,189,248,0.28)';
+      // Pommel gem
+      ctx.fillStyle = '#38bdf8';
       ctx.beginPath();
-      ctx.ellipse(29, 0, 17, 6, 0, 0, Math.PI * 2);
+      ctx.arc(5, 0, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      // Crossguard
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(12, -7, 3.2, 14);
+      ctx.fillStyle = 'rgba(56,189,248,0.32)';
+      ctx.beginPath();
+      ctx.ellipse(30, 0, 18, 6.5, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#e0f2fe';
       ctx.beginPath();
-      ctx.moveTo(15, -3.2);
-      ctx.lineTo(38, -2);
-      ctx.lineTo(43, 0);
-      ctx.lineTo(38, 2);
-      ctx.lineTo(15, 3.2);
+      ctx.moveTo(15, -3.4);
+      ctx.lineTo(39, -2);
+      ctx.lineTo(44, 0);
+      ctx.lineTo(39, 2);
+      ctx.lineTo(15, 3.4);
       ctx.closePath();
       ctx.fill();
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 1.4;
       ctx.stroke();
+      // Central plasma fuller line
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(16, 0);
+      ctx.lineTo(38, 0);
+      ctx.stroke();
     } else if (this.weaponStyle === 'staff') {
       const thrust = this.attackAnimTimer > 0 ? Math.sin(atkFrac * Math.PI) * 8 : 0;
       ctx.rotate(this.weaponAimAngle);
       ctx.translate(thrust, 0);
+      ctx.fillStyle = this.hero.secondaryColor;
+      ctx.fillRect(0, -2.4, 9, 4.8);
       ctx.fillStyle = '#fde68a';
       ctx.beginPath();
       ctx.arc(10, 0, 3.4, 0, Math.PI * 2);
@@ -2870,9 +2906,9 @@ export class SurvivorEngine {
       ctx.closePath();
       ctx.fill();
       const orbPulse = 6.2 + Math.sin(this.elapsedSec * 9) * 1.1 + (this.attackAnimTimer > 0 ? 2.5 : 0);
-      ctx.fillStyle = 'rgba(192,132,252,0.32)';
+      ctx.fillStyle = 'rgba(192,132,252,0.34)';
       ctx.beginPath();
-      ctx.arc(34, 0, orbPulse * 1.75, 0, Math.PI * 2);
+      ctx.arc(34, 0, orbPulse * 1.8, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#c084fc';
       ctx.beginPath();
@@ -2882,9 +2918,17 @@ export class SurvivorEngine {
       ctx.beginPath();
       ctx.arc(33, -1.5, orbPulse * 0.42, 0, Math.PI * 2);
       ctx.fill();
+      // Orbiting rune shard around staff crystal
+      const shardAng = this.elapsedSec * 5;
+      ctx.fillStyle = '#fef08a';
+      ctx.beginPath();
+      ctx.arc(34 + Math.cos(shardAng) * 10.5, Math.sin(shardAng) * 10.5, 1.9, 0, Math.PI * 2);
+      ctx.fill();
     } else {
       const drawPull = this.attackAnimTimer > 0 ? Math.sin(atkFrac * Math.PI) * 6 : 2;
       ctx.rotate(this.weaponAimAngle);
+      ctx.fillStyle = this.hero.secondaryColor;
+      ctx.fillRect(0, -2.2, 11, 4.4);
       ctx.fillStyle = '#fde68a';
       ctx.beginPath();
       ctx.arc(13, 0, 3.2, 0, Math.PI * 2);
@@ -2896,6 +2940,11 @@ export class SurvivorEngine {
       ctx.moveTo(8, -16);
       ctx.quadraticCurveTo(21, 0, 8, 16);
       ctx.stroke();
+      ctx.fillStyle = '#bbf7d0';
+      ctx.beginPath();
+      ctx.arc(8, -16, 2, 0, Math.PI * 2);
+      ctx.arc(8, 16, 2, 0, Math.PI * 2);
+      ctx.fill();
       ctx.strokeStyle = '#e2e8f0';
       ctx.lineWidth = 1.2;
       ctx.beginPath();
@@ -3000,12 +3049,18 @@ export class SurvivorEngine {
       for (const side of [-1, 1]) {
         ctx.beginPath();
         ctx.moveTo(side * r * 0.5, -r * 0.1);
-        ctx.lineTo(side * r * 1.45, -r * 0.65 + flap);
-        ctx.lineTo(side * r * 1.25, r * 0.2 + flap * 0.5);
+        ctx.lineTo(side * r * 1.48, -r * 0.68 + flap);
+        ctx.lineTo(side * r * 1.25, r * 0.24 + flap * 0.5);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+        // Wing membrane rib
+        ctx.beginPath();
+        ctx.moveTo(side * r * 0.55, -r * 0.05);
+        ctx.lineTo(side * r * 1.15, -r * 0.15 + flap * 0.65);
+        ctx.stroke();
       }
+      // Armored body + shoulder spikes
       ctx.fillStyle = fill;
       ctx.strokeStyle = '#fef08a';
       ctx.lineWidth = 3;
@@ -3013,6 +3068,17 @@ export class SurvivorEngine {
       ctx.arc(0, 0, r * 0.9, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+      // Pulsing chest energy core
+      const corePulse = 0.7 + 0.3 * Math.sin(this.elapsedSec * 8);
+      ctx.fillStyle = `rgba(250, 204, 21, ${(0.38 * corePulse).toFixed(2)})`;
+      ctx.beginPath();
+      ctx.arc(0, r * 0.52, r * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fef08a';
+      ctx.beginPath();
+      ctx.arc(0, r * 0.52, r * 0.14, 0, Math.PI * 2);
+      ctx.fill();
+      // Horns + Floating Boss Crown
       ctx.fillStyle = '#fde047';
       for (const side of [-1, 1]) {
         ctx.beginPath();
@@ -3022,6 +3088,17 @@ export class SurvivorEngine {
         ctx.closePath();
         ctx.fill();
       }
+      ctx.fillStyle = '#facc15';
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.28, -r * 0.92);
+      ctx.lineTo(-r * 0.22, -r * 1.22);
+      ctx.lineTo(-r * 0.08, -r * 1.02);
+      ctx.lineTo(0, -r * 1.28);
+      ctx.lineTo(r * 0.08, -r * 1.02);
+      ctx.lineTo(r * 0.22, -r * 1.22);
+      ctx.lineTo(r * 0.28, -r * 0.92);
+      ctx.closePath();
+      ctx.fill();
       // Glowing eyes
       ctx.fillStyle = 'rgba(254, 240, 138, 0.35)';
       ctx.beginPath();
