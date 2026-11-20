@@ -1,7 +1,7 @@
-# Privacy Policy — Starforge Survivors
+# Privacy Policy — Starforge Survivors (Premium Edition)
 
-**Last updated:** 2026-11-17  
-**Developer:** VaelNTN  
+**Last updated:** 2026-11-19  
+**Developer:** VaelNTN Studios  
 **Package ID:** `com.vaelntn.starforgesurvivors`  
 **Repository:** https://github.com/VaelNTN/starforge-survivors
 
@@ -9,35 +9,34 @@
 
 ## English (Google Play Store Review)
 
-### 1. Overview
-Starforge Survivors is a free-to-play sci-fi action roguelite game offering optional **Google Play In-App Purchases** (bundles, Star Gems, Season Pass, Ad-Removal, and VIP Subscription) and optional **Rewarded / Interstitial Advertisements** powered by Google AdMob.
+### 1. Paid Premium Edition — Zero Ads, Zero In-App Purchases, Zero Ad Tracking
+Starforge Survivors is a **Paid Premium Edition** sci-fi action roguelite game.
+- **Zero Advertisements:** The app contains no ad SDKs (no AdMob, no interstitials, no rewarded videos).
+- **Zero In-App Purchases:** 100% of heroes, weapons, relics, chapters, ascension tiers, and the 30-tier Mastery Track are included and earned purely through gameplay.
+- **Zero Ad Tracking:** We do not collect, read, or transmit the Android Advertising ID (AAID) or any cross-app tracking identifiers.
 
 ### 2. Data Stored Locally on Your Device
-Your game progress, heroes, gear inventory, talents, virtual currencies, and preferences are stored locally on your Android device inside WebView `localStorage`.
+Your game progress, heroes, gear inventory, talents, relics, codex discoveries, mid-run auto-save snapshots, and preferences are stored locally on your device inside WebView `localStorage`.
 
-### 3. In-App Purchases (Google Play Billing)
-All purchases and subscriptions are processed securely by **Google Play Billing**. We do not receive, process, or store your credit card numbers, bank details, or billing address. Google Play provides anonymous purchase tokens strictly used to grant and restore your purchased in-game items or VIP/No-Ads entitlements.
+### 3. Online Leaderboards (Optional Gameplay Feature)
+When you complete a run in **Endless Void**, **Boss Rush**, or the **Daily Seeded Run** while online, the game submits your chosen in-game display name, a randomly generated anonymous local device ID, hero ID, ascension tier, wave/time, kills, and score to our highscore service (`arcade-highscores-worker`) solely to display public rankings. No email address, real name, location, or personal contact data is collected. Offline play works fully without any network connection.
 
-### 4. Advertising (Google AdMob)
-If you have not purchased the No-Ads Pack or VIP Club, Starforge Survivors uses **Google Mobile Ads (AdMob)** to display optional Rewarded Video Ads (e.g. Revive, 2x Loot, Free Gems) and occasional post-run Interstitial Ads. Google AdMob may collect device identifiers (such as the Android Advertising ID), IP address, and ad interaction metrics in accordance with Google's Privacy Policy (`https://policies.google.com/privacy`).
+### 4. Children's Privacy
+Starforge Survivors does not knowingly collect personal contact information from anyone, including children under 13.
 
-### 5. Children's Privacy
-Starforge Survivors is designed for general audiences aged 12+ and does not knowingly collect personal contact information from children under 13.
-
-### 6. Data Deletion & Support
-- **Local game data:** Clear app storage or uninstall the app.
-- **Support / Purchase help:** Open an issue at `https://github.com/VaelNTN/starforge-survivors/issues`.
+### 5. Data Deletion & Support
+- **Local game data:** Use *Settings → Reset Progress* in-game, clear app storage, or uninstall the app.
+- **Support / Leaderboard data removal:** Open an issue at `https://github.com/VaelNTN/starforge-survivors/issues`.
 
 ---
 
 ## Nederlands
 
-### 1. Overzicht
-Starforge Survivors is een gratis sci-fi actie-roguelite met optionele **Google Play In-App Aankopen** (bundels, Star Gems, Season Pass, Geen Reclame en VIP-abonnement) en optionele **Google AdMob** beloonde video's / tussen-advertenties.
+### 1. Betaalde Premium Editie — Geen Advertenties, Geen In-App Aankopen, Geen Ad-Tracking
+Starforge Survivors is een **betaalde Premium Editie** sci-fi actie-roguelite:
+- **Geen advertenties:** Geen AdMob of andere advertentie-SDK's.
+- **Geen in-app aankopen:** Alle 6 helden, wapens, relieken, hoofdstukken, Ascension-niveaus en alle 30 Mastery-tiers zijn volledig inbegrepen en vrij te spelen.
+- **Geen advertentie-tracking:** Wij verzamelen geen Advertising ID of trackingprofielen.
 
-### 2. Lokale Opslag
-Spelvoortgang, helden, gear en instellingen worden lokaal op je toestel bewaard (`localStorage`).
-
-### 3. Betalingen & Advertenties
-- Alle aankopen lopen veilig via **Google Play Billing**; wij zien nooit betaalgegevens.
-- Advertenties lopen via **Google AdMob** (en verdwijnen direct bij aankoop van *Geen Reclame* of *VIP Club*).
+### 2. Lokale Opslag & Online Ranglijsten
+Spelvoortgang wordt lokaal op je toestel bewaard (`localStorage`). Voor de optionele online ranglijsten (Endless Void, Boss Rush, Daily Run) worden uitsluitend je gekozen spelersnaam, een anoniem gegenereerd apparaat-ID en je score verzonden.

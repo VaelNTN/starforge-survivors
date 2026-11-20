@@ -4,6 +4,4 @@
     <string name="title_activity_main">Starforge Survivors</string>
     <string name="package_name">com.vaelntn.starforgesurvivors</string>
     <string name="custom_url_scheme">com.vaelntn.starforgesurvivors</string>
-    <!-- Official Google AdMob Test App ID (replace with your live AdMob App ID before Production release) -->
-    <string name="admob_app_id">ca-app-pub-3940256099942544~3347511713</string>
 </resources>

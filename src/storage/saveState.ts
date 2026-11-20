@@ -1,8 +1,5 @@
 import {
   CRATE_COSTS,
-  SHOP_SKUS,
-} from '../config/monetization';
-import {
   GEAR_TEMPLATES,
   HEROES,
   RARITY_META,
@@ -10,23 +7,24 @@ import {
   TALENTS,
   WHEEL_REWARDS,
   WheelSliceDef,
+  getTodayDateKey,
 } from '../data/gameCatalog';
 import {
+  AscensionTier,
   CombatStats,
   GearItem,
   GearSlot,
+  HeroId,
   LeaderboardEntry,
+  LeaderboardMode,
   PlayerSave,
   Rarity,
   RunSummary,
+  SavedRunSnapshot,
 } from '../types/game';
 
 const STORAGE_KEY = 'starforge_survivors_save_v1';
-
-function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+const ACTIVE_RUN_KEY = 'starforge_active_run_v2';
 
 function makeUid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -56,43 +54,31 @@ export function getGearStats(item: GearItem): { atk: number; hp: number } {
   };
 }
 
-function initialLeaderboard(): LeaderboardEntry[] {
-  return [
-    { name: 'CyberKuro', score: 14800, wave: 420, heroId: 'vespera', power: 2450, date: '2026-11-16' },
-    { name: 'NovaPrime', score: 11200, wave: 345, heroId: 'nova', power: 1840, date: '2026-11-16' },
-    { name: 'VaelCommander', score: 8650, wave: 285, heroId: 'titan', power: 1320, date: '2026-11-16' },
-    { name: 'NeonPulseNL', score: 5400, wave: 210, heroId: 'kael', power: 890, date: '2026-11-16' },
-    { name: 'StarDrifter', score: 2950, wave: 140, heroId: 'kael', power: 460, date: '2026-11-16' },
-  ];
-}
-
 export function createDefaultSave(): PlayerSave {
-  const starterWeapon = createGearItem('wp_katana', 'common', 1);
+  const starterWeapon = createGearItem('wp_katana', 'uncommon', 1);
   const starterArmor = createGearItem('ar_aegis', 'common', 1);
   const starterBoots = createGearItem('bt_thruster', 'common', 1);
-  const day = todayStr();
+  const day = getTodayDateKey();
 
   return {
-    version: 1,
+    version: 2,
     deviceId: makeUid('dev'),
     playerName: 'Commander',
     accountLevel: 1,
     accountXp: 0,
-    coins: 1200,
-    gems: 100,
-    blueprints: 12,
-    basicKeys: 1,
-    cyberKeys: 0,
-    reviveTokens: 1,
-    rerollTokens: 2,
-    piggyGems: 120,
-    piggyMaxGems: 1500,
+    coins: 1500,
+    gems: 150,
+    blueprints: 16,
+    basicKeys: 2,
+    cyberKeys: 1,
+    reviveTokens: 2,
     pityCounter: 0,
 
     selectedHero: 'kael',
-    selectedWeaponStyle: 'sword',
+    selectedWeaponStyle: 'signature',
+    selectedAscension: 1,
     unlockedHeroes: ['kael'],
-    heroLevels: { kael: 1, nova: 1, titan: 1, vespera: 1 },
+    heroLevels: { kael: 1, nova: 1, titan: 1, aegis: 1, pyro: 1, vespera: 1 },
 
     equipped: {
       weapon: starterWeapon.uid,
@@ -107,22 +93,20 @@ export function createDefaultSave(): PlayerSave {
 
     highestChapterUnlocked: 1,
     clearedChapters: [],
+    highestAscensionCleared: 1,
     bestEndlessSec: 0,
     bestEndlessKills: 0,
+    bestBossRushSec: 0,
+    bossRushClears: 0,
+    bestDailyScore: 0,
+    dailyCompletedDate: '',
     totalKills: 0,
     totalRuns: 0,
     totalBossesKilled: 0,
+    totalShrinesClaimed: 0,
 
     passXp: 0,
-    passPremiumUnlocked: false,
-    passClaimedFree: [],
-    passClaimedPremium: [],
-
-    noAdsForever: false,
-    vipExpiresAt: 0,
-    starterPackBought: false,
-    purchasedSkusOneTime: [],
-    firstBuyUsedSkus: [],
+    passClaimedTiers: [],
 
     lastLoginDay: day,
     loginStreak: 1,
@@ -130,34 +114,33 @@ export function createDefaultSave(): PlayerSave {
 
     lastDailyDay: day,
     freeGiftClaimedToday: false,
-    adGemsUsedToday: 0,
-    adKeysUsedToday: 0,
     wheelSpinsFreeUsedToday: 0,
-    wheelSpinsAdUsedToday: 0,
-    pendingVipDailyGems: 0,
     quests: {
       killsToday: 0,
       runsToday: 0,
       bossesToday: 0,
       upgradesToday: 0,
-      adsToday: 0,
+      objectivesToday: 0,
       claimedIds: [],
     },
     claimedAchievements: [],
     discoveredEvos: [],
     claimedEvoCodex: [],
-    bestBossRushSec: 0,
-    bossRushClears: 0,
+    discoveredRelics: [],
+    defeatedBosses: [],
 
     lastPatrolCollectAt: Date.now(),
-    lastInterstitialAt: 0,
 
     soundEnabled: true,
     musicEnabled: true,
     vibrationEnabled: true,
     damageNumbersEnabled: true,
 
-    leaderboard: initialLeaderboard(),
+    localLeaderboard: {
+      endless: [],
+      boss_rush: [],
+      daily: [],
+    },
   };
 }
 
@@ -173,16 +156,26 @@ export function loadSave(): PlayerSave {
       saveGame(fresh);
       return fresh;
     }
-    const parsed = JSON.parse(raw) as Partial<PlayerSave>;
+    const parsed = JSON.parse(raw) as Partial<PlayerSave> & {
+      passClaimedFree?: number[];
+      passClaimedPremium?: number[];
+    };
     const base = createDefaultSave();
+
     const rawInv = Array.isArray(parsed.inventory) && parsed.inventory.length > 0 ? parsed.inventory : base.inventory;
-    const cleanInv = rawInv.filter(
-      (g): g is GearItem =>
-        Boolean(g && typeof g.uid === 'string' && typeof g.templateId === 'string' && g.rarity in RARITY_META)
-    ).map((g) => ({
-      ...g,
-      level: Math.max(1, Math.min(RARITY_META[g.rarity].maxLv, Math.floor(safeNum(g.level, 1, 1)))),
-    }));
+    const cleanInv = rawInv
+      .filter(
+        (g): g is GearItem =>
+          Boolean(g && typeof g.uid === 'string' && typeof g.templateId === 'string' && g.rarity in RARITY_META)
+      )
+      .map((g) => {
+        const tpl = GEAR_TEMPLATES.find((t) => t.templateId === g.templateId);
+        return {
+          ...g,
+          perkText: tpl ? tpl.perkText : g.perkText,
+          level: Math.max(1, Math.min(RARITY_META[g.rarity].maxLv, Math.floor(safeNum(g.level, 1, 1)))),
+        };
+      });
     const inv = cleanInv.length > 0 ? cleanInv : base.inventory;
     const invUids = new Set(inv.map((g) => g.uid));
     const rawEquipped = { ...base.equipped, ...(parsed.equipped || {}) };
@@ -194,18 +187,40 @@ export function loadSave(): PlayerSave {
     }
 
     const rawHeroLevels = { ...base.heroLevels, ...(parsed.heroLevels || {}) };
-    const cleanHeroLevels: Record<string, number> = {};
-    for (const [k, v] of Object.entries(rawHeroLevels)) {
-      cleanHeroLevels[k] = Math.floor(safeNum(v, 1, 1));
+    const cleanHeroLevels = { ...base.heroLevels } as Record<HeroId, number>;
+    for (const h of HEROES) {
+      cleanHeroLevels[h.id] = Math.floor(safeNum((rawHeroLevels as Record<string, unknown>)[h.id], 1, 1));
     }
+
     const cleanTalents: Record<string, number> = {};
     for (const [k, v] of Object.entries(parsed.talents || {})) {
       cleanTalents[k] = Math.floor(safeNum(v, 0, 0));
     }
 
+    // Migrate claimed tiers from v1 if present
+    const migratedClaimed = Array.isArray(parsed.passClaimedTiers)
+      ? parsed.passClaimedTiers
+      : Array.isArray(parsed.passClaimedFree)
+        ? parsed.passClaimedFree
+        : [];
+
+    const validAsc = Math.max(1, Math.min(5, Math.floor(safeNum(parsed.selectedAscension, 1, 1)))) as AscensionTier;
+    const validHighAsc = Math.max(1, Math.min(5, Math.floor(safeNum(parsed.highestAscensionCleared, 1, 1)))) as AscensionTier;
+
+    const validWStyle =
+      parsed.selectedWeaponStyle === 'sword' ||
+      parsed.selectedWeaponStyle === 'staff' ||
+      parsed.selectedWeaponStyle === 'bow' ||
+      parsed.selectedWeaponStyle === 'signature'
+        ? parsed.selectedWeaponStyle
+        : 'signature';
+
+    const localLb = parsed.localLeaderboard || base.localLeaderboard;
+
     const merged: PlayerSave = {
       ...base,
       ...parsed,
+      version: 2,
       accountLevel: Math.floor(safeNum(parsed.accountLevel, base.accountLevel, 1)),
       accountXp: safeNum(parsed.accountXp, base.accountXp, 0),
       coins: Math.floor(safeNum(parsed.coins, base.coins, 0)),
@@ -214,22 +229,34 @@ export function loadSave(): PlayerSave {
       basicKeys: Math.floor(safeNum(parsed.basicKeys, base.basicKeys, 0)),
       cyberKeys: Math.floor(safeNum(parsed.cyberKeys, base.cyberKeys, 0)),
       reviveTokens: Math.floor(safeNum(parsed.reviveTokens, base.reviveTokens, 0)),
-      rerollTokens: Math.floor(safeNum(parsed.rerollTokens, base.rerollTokens, 0)),
-      piggyGems: Math.floor(safeNum(parsed.piggyGems, base.piggyGems, 0)),
       highestChapterUnlocked: Math.min(6, Math.max(1, Math.floor(safeNum(parsed.highestChapterUnlocked, 1, 1)))),
       selectedHero: HEROES.some((h) => h.id === parsed.selectedHero) ? parsed.selectedHero! : base.selectedHero,
-      selectedWeaponStyle:
-        parsed.selectedWeaponStyle === 'staff' || parsed.selectedWeaponStyle === 'bow'
-          ? parsed.selectedWeaponStyle
-          : 'sword',
-      heroLevels: cleanHeroLevels as PlayerSave['heroLevels'],
+      selectedWeaponStyle: validWStyle,
+      selectedAscension: validAsc,
+      highestAscensionCleared: validHighAsc,
+      unlockedHeroes: Array.isArray(parsed.unlockedHeroes) && parsed.unlockedHeroes.length > 0
+        ? parsed.unlockedHeroes.filter((id): id is HeroId => HEROES.some((h) => h.id === id))
+        : ['kael'],
+      heroLevels: cleanHeroLevels,
       equipped: rawEquipped,
       talents: cleanTalents,
-      quests: { ...base.quests, ...(parsed.quests || {}) },
+      passClaimedTiers: migratedClaimed,
+      quests: {
+        ...base.quests,
+        ...(parsed.quests || {}),
+        objectivesToday: Math.floor(safeNum(parsed.quests?.objectivesToday, 0, 0)),
+        claimedIds: Array.isArray(parsed.quests?.claimedIds) ? parsed.quests!.claimedIds : [],
+      },
       discoveredEvos: Array.isArray(parsed.discoveredEvos) ? parsed.discoveredEvos : [],
       claimedEvoCodex: Array.isArray(parsed.claimedEvoCodex) ? parsed.claimedEvoCodex : [],
+      discoveredRelics: Array.isArray(parsed.discoveredRelics) ? parsed.discoveredRelics : [],
+      defeatedBosses: Array.isArray(parsed.defeatedBosses) ? parsed.defeatedBosses : [],
       inventory: inv,
-      leaderboard: Array.isArray(parsed.leaderboard) && parsed.leaderboard.length > 0 ? parsed.leaderboard : base.leaderboard,
+      localLeaderboard: {
+        endless: Array.isArray(localLb.endless) ? localLb.endless : [],
+        boss_rush: Array.isArray(localLb.boss_rush) ? localLb.boss_rush : [],
+        daily: Array.isArray(localLb.daily) ? localLb.daily : [],
+      },
     };
     return ensureDailyState(merged);
   } catch {
@@ -241,25 +268,58 @@ export function saveGame(save: PlayerSave): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(save));
   } catch {
-    // Ignore storage quota errors cleanly
+    // Ignore storage quota errors
+  }
+}
+
+// ---- Mid-Run Auto-Save Persistence ----
+
+export function saveActiveRun(snap: SavedRunSnapshot): void {
+  try {
+    localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify(snap));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function loadActiveRun(): SavedRunSnapshot | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_RUN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SavedRunSnapshot;
+    if (!parsed || parsed.version !== 2 || !Number.isFinite(parsed.savedAt)) return null;
+    // Expire snapshots older than 24 hours
+    if (Date.now() - parsed.savedAt > 86_400_000) {
+      clearActiveRun();
+      return null;
+    }
+    if (!Array.isArray(parsed.weapons) || parsed.weapons.length === 0) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearActiveRun(): void {
+  try {
+    localStorage.removeItem(ACTIVE_RUN_KEY);
+  } catch {
+    // Ignore
   }
 }
 
 export function ensureDailyState(save: PlayerSave): PlayerSave {
-  const today = todayStr();
+  const today = getTodayDateKey();
   if (save.lastDailyDay !== today) {
     save.lastDailyDay = today;
     save.freeGiftClaimedToday = false;
-    save.adGemsUsedToday = 0;
-    save.adKeysUsedToday = 0;
     save.wheelSpinsFreeUsedToday = 0;
-    save.wheelSpinsAdUsedToday = 0;
     save.quests = {
       killsToday: 0,
       runsToday: 0,
       bossesToday: 0,
       upgradesToday: 0,
-      adsToday: 0,
+      objectivesToday: 0,
       claimedIds: [],
     };
   }
@@ -267,20 +327,11 @@ export function ensureDailyState(save: PlayerSave): PlayerSave {
     const prev = new Date(`${save.lastLoginDay}T00:00:00`);
     const curr = new Date(`${today}T00:00:00`);
     const diffDays = Math.round((curr.getTime() - prev.getTime()) / 86_400_000);
-    save.loginStreak = diffDays === 1 ? ((save.loginStreak % 7) + 1) : 1;
+    save.loginStreak = diffDays === 1 ? (save.loginStreak % 7) + 1 : 1;
     save.lastLoginDay = today;
     save.loginClaimedToday = false;
-    // VIP daily bonus auto-credit
-    if (save.vipExpiresAt > Date.now()) {
-      save.gems += 80;
-      save.pendingVipDailyGems = (save.pendingVipDailyGems || 0) + 80;
-    }
   }
   return save;
-}
-
-export function isVipActive(save: PlayerSave): boolean {
-  return save.vipExpiresAt > Date.now();
 }
 
 export function computePlayerStats(save: PlayerSave): CombatStats {
@@ -294,17 +345,26 @@ export function computePlayerStats(save: PlayerSave): CombatStats {
   let critChance = hero.id === 'kael' ? 0.17 : 0.05;
   let critMult = 1.75;
   let cooldownReduction = hero.id === 'nova' ? 0.15 : 0;
-  let pickupRadius = 78;
-  let goldMult = 1.0 + (save.noAdsForever ? 0.2 : 0) + (isVipActive(save) ? 0.25 : 0);
-  let xpMult = 1.0 + (isVipActive(save) ? 0.25 : 0);
-  let hpRegenPerSec = 0.6;
+  let projPowerMult = 1.0;
+  let dodgeChance = 0;
+  let areaMult = hero.id === 'aegis' ? 1.15 : 1.0;
+  let pickupRadius = 82;
+  let goldMult = 1.25; // Premium Edition generous baseline!
+  let xpMult = 1.15;
+  let hpRegenPerSec = 0.7;
   let revives = 0;
+  let rerolls = 1; // 1 free Reroll per run baseline
+  let banishes = 1; // 1 free Banish per run baseline
 
   if (hero.id === 'titan') {
     maxHp *= 1.35;
     armor += 5;
   } else if (hero.id === 'vespera') {
     atk *= 1.2;
+  } else if (hero.id === 'aegis') {
+    armor += 3;
+  } else if (hero.id === 'pyro') {
+    moveSpeed *= 1.12;
   }
 
   // Talents
@@ -343,10 +403,16 @@ export function computePlayerStats(save: PlayerSave): CombatStats {
       case 'revives':
         revives += val;
         break;
+      case 'rerolls':
+        rerolls += val;
+        break;
+      case 'banishes':
+        banishes += val;
+        break;
     }
   }
 
-  // Equipped gear
+  // Equipped gear (ALL perks wired cleanly!)
   const slots: GearSlot[] = ['weapon', 'armor', 'helmet', 'boots', 'ring', 'core'];
   for (const sl of slots) {
     const uid = save.equipped[sl];
@@ -358,8 +424,12 @@ export function computePlayerStats(save: PlayerSave): CombatStats {
     maxHp += gs.hp;
 
     if (item.templateId === 'wp_katana') critMult += 0.15;
+    if (item.templateId === 'wp_voidcannon') projPowerMult += 0.08;
     if (item.templateId === 'ar_aegis') armor += 4;
-    if (item.templateId === 'ar_stealth') moveSpeed *= 1.05;
+    if (item.templateId === 'ar_stealth') {
+      dodgeChance += 0.08;
+      moveSpeed *= 1.05;
+    }
     if (item.templateId === 'hm_visor') xpMult += 0.1;
     if (item.templateId === 'hm_titan') maxHp *= 1.12;
     if (item.templateId === 'bt_thruster') moveSpeed *= 1.12;
@@ -370,18 +440,15 @@ export function computePlayerStats(save: PlayerSave): CombatStats {
     if (item.templateId === 'cr_phoenix') hpRegenPerSec += 2.5;
   }
 
-  if (isVipActive(save)) {
-    pickupRadius *= 1.25;
-  }
-
   const finalMaxHp = Math.round(maxHp);
   const finalAtk = Math.round(atk);
-  const cooldownMult = Math.max(0.45, 1 - cooldownReduction);
+  const cooldownMult = Math.max(0.42, 1 - cooldownReduction);
   const powerRating = Math.round(
-    finalAtk * 3.1 +
+    finalAtk * 3.1 * projPowerMult +
       finalMaxHp * 0.25 +
       armor * 8 +
       critChance * 420 +
+      dodgeChance * 350 +
       (1 / cooldownMult - 1) * 280
   );
 
@@ -390,14 +457,19 @@ export function computePlayerStats(save: PlayerSave): CombatStats {
     atk: finalAtk,
     armor: Math.round(armor),
     moveSpeed: Math.round(moveSpeed),
-    critChance: Math.min(0.75, critChance),
+    critChance: Math.min(0.8, critChance),
     critMult,
     cooldownMult,
+    projPowerMult,
+    dodgeChance: Math.min(0.45, dodgeChance),
+    areaMult,
     pickupRadius: Math.round(pickupRadius),
     goldMult,
     xpMult,
     hpRegenPerSec,
     revives,
+    rerolls,
+    banishes,
     powerRating,
   };
 }
@@ -405,8 +477,8 @@ export function computePlayerStats(save: PlayerSave): CombatStats {
 export function getGearUpgradeCost(item: GearItem): { coins: number; blueprints: number } {
   const lv = item.level;
   return {
-    coins: Math.round(140 + lv * lv * 18 + lv * 85),
-    blueprints: Math.max(1, Math.floor(1 + lv * 0.65)),
+    coins: Math.round(130 + lv * lv * 16 + lv * 78),
+    blueprints: Math.max(1, Math.floor(1 + lv * 0.6)),
   };
 }
 
@@ -431,9 +503,7 @@ export function findMergeCandidates(save: PlayerSave, uid: string): GearItem[] {
   const nextIdx = RARITY_ORDER.indexOf(target.rarity) + 1;
   if (nextIdx <= 0 || nextIdx >= RARITY_ORDER.length) return [];
 
-  return save.inventory.filter(
-    (g) => g.templateId === target.templateId && g.rarity === target.rarity
-  );
+  return save.inventory.filter((g) => g.templateId === target.templateId && g.rarity === target.rarity);
 }
 
 export function mergeGearTriplet(save: PlayerSave, uid: string): GearItem | null {
@@ -445,7 +515,6 @@ export function mergeGearTriplet(save: PlayerSave, uid: string): GearItem | null
   const group = findMergeCandidates(save, uid);
   if (group.length < 3) return null;
 
-  // Keep highest level / equipped item as primary, sacrifice 2 others
   const sorted = [...group].sort((a, b) => {
     const aEq = save.equipped[a.slot] === a.uid ? 1 : 0;
     const bEq = save.equipped[b.slot] === b.uid ? 1 : 0;
@@ -564,35 +633,33 @@ export function rollCrateDrop(crateType: 'basic' | 'cyber' | 'mythic', save: Pla
   let rarity: Rarity = 'common';
 
   if (crateType === 'basic') {
-    if (r < 0.04) rarity = 'rare';
-    else if (r < 0.28) rarity = 'uncommon';
+    if (r < 0.08) rarity = 'rare';
+    else if (r < 0.38) rarity = 'uncommon';
     else rarity = 'common';
   } else if (crateType === 'cyber') {
     save.pityCounter += 1;
     if (save.pityCounter >= 10) {
       rarity = 'epic';
       save.pityCounter = 0;
-    } else if (r < 0.025) {
+    } else if (r < 0.05) {
       rarity = 'legendary';
       save.pityCounter = 0;
-    } else if (r < 0.14) {
+    } else if (r < 0.22) {
       rarity = 'epic';
       save.pityCounter = 0;
-    } else if (r < 0.52) {
+    } else if (r < 0.62) {
       rarity = 'rare';
     } else {
       rarity = 'uncommon';
     }
   } else {
-    // Mythic Vault
-    if (r < 0.05) rarity = 'mythic';
-    else if (r < 0.25) rarity = 'legendary';
+    if (r < 0.1) rarity = 'mythic';
+    else if (r < 0.36) rarity = 'legendary';
     else rarity = 'epic';
   }
 
   const drop = createGearItem(tpl.templateId, rarity, 1);
   save.inventory.unshift(drop);
-  // Auto-equip if slot is empty or strictly stronger than currently equipped item
   const curUid = save.equipped[drop.slot];
   if (!curUid) {
     save.equipped[drop.slot] = drop.uid;
@@ -653,22 +720,29 @@ export function computePatrolEarnings(save: PlayerSave): {
   blueprints: number;
 } {
   const elapsedMin = Math.max(0, Math.min(720, Math.floor((Date.now() - save.lastPatrolCollectAt) / 60_000)));
-  const chapterFactor = 1 + (save.highestChapterUnlocked - 1) * 0.45;
+  const chapterFactor = 1 + (save.highestChapterUnlocked - 1) * 0.48;
   const stats = computePlayerStats(save);
-  const coins = Math.floor(elapsedMin * 24 * chapterFactor * stats.goldMult);
-  const blueprints = Math.floor(elapsedMin / 25);
+  // Generous 1.5x patrol yield (no ad-doubler needed!)
+  const coins = Math.floor(elapsedMin * 36 * chapterFactor * stats.goldMult);
+  const blueprints = Math.floor(elapsedMin / 18);
   return { minutes: elapsedMin, coins, blueprints };
 }
 
-export function collectPatrolEarnings(save: PlayerSave, mult = 1): { coins: number; blueprints: number } {
+export function collectPatrolEarnings(save: PlayerSave): { coins: number; blueprints: number } {
   const p = computePatrolEarnings(save);
-  const coins = p.coins * mult;
-  const blueprints = p.blueprints * mult;
-  save.coins += coins;
-  save.blueprints += blueprints;
+  save.coins += p.coins;
+  save.blueprints += p.blueprints;
   save.lastPatrolCollectAt = Date.now();
   saveGame(save);
-  return { coins, blueprints };
+  return { coins: p.coins, blueprints: p.blueprints };
+}
+
+export function recordLocalLeaderboardEntry(save: PlayerSave, entry: LeaderboardEntry): void {
+  const mode: LeaderboardMode = entry.mode;
+  const list = [...(save.localLeaderboard[mode] || [])];
+  list.push(entry);
+  list.sort((a, b) => b.score - a.score);
+  save.localLeaderboard[mode] = list.slice(0, 25);
 }
 
 export function applyRunOutcome(save: PlayerSave, summary: RunSummary): void {
@@ -681,59 +755,87 @@ export function applyRunOutcome(save: PlayerSave, summary: RunSummary): void {
   while (save.accountXp >= save.accountLevel * 120) {
     save.accountXp -= save.accountLevel * 120;
     save.accountLevel += 1;
-    save.gems += 15;
+    save.gems += 20;
   }
 
-  // Record newly discovered weapon evolutions for Codex
   for (const wId of summary.evoIdsUnlocked || []) {
     if (!save.discoveredEvos.includes(wId)) {
       save.discoveredEvos.push(wId);
     }
   }
-
-  // Fill Piggy Bank up to cap from monster kills
-  const piggyAdd = Math.min(save.piggyMaxGems - save.piggyGems, Math.max(10, Math.floor(summary.kills / 12)));
-  save.piggyGems += piggyAdd;
+  for (const rId of summary.relicsCollected || []) {
+    if (!save.discoveredRelics.includes(rId)) {
+      save.discoveredRelics.push(rId);
+    }
+  }
+  for (const bArch of summary.bossArchetypesDefeated || []) {
+    if (!save.defeatedBosses.includes(bArch)) {
+      save.defeatedBosses.push(bArch);
+    }
+  }
 
   save.totalKills += summary.kills;
   save.totalRuns += 1;
   save.totalBossesKilled += summary.bossesKilled;
+  save.totalShrinesClaimed += summary.shrinesClaimed;
   save.quests.killsToday += summary.kills;
   save.quests.runsToday += 1;
   save.quests.bossesToday += summary.bossesKilled;
+  save.quests.objectivesToday += summary.shrinesClaimed + summary.bossesKilled;
 
-  if (summary.chapterId === 99) {
+  if (summary.victory && summary.ascension > save.highestAscensionCleared) {
+    save.highestAscensionCleared = summary.ascension;
+  }
+
+  if (summary.mode === 'endless') {
     if (summary.survivedSec > save.bestEndlessSec) save.bestEndlessSec = summary.survivedSec;
     if (summary.kills > save.bestEndlessKills) save.bestEndlessKills = summary.kills;
-
-    const score = summary.survivedSec * 25 + summary.kills * 4 + summary.bossesKilled * 250;
-    const stats = computePlayerStats(save);
-    const existingIdx = save.leaderboard.findIndex((e) => e.isPlayer);
-    const entry: LeaderboardEntry = {
-      name: save.playerName,
-      score,
+    recordLocalLeaderboardEntry(save, {
+      deviceId: save.deviceId,
+      playerName: save.playerName,
+      mode: 'endless',
+      score: summary.score,
       wave: summary.survivedSec,
+      kills: summary.kills,
       heroId: save.selectedHero,
-      power: stats.powerRating,
+      ascension: summary.ascension,
       isPlayer: true,
-      date: todayStr(),
-    };
-    if (existingIdx >= 0) {
-      if (score > save.leaderboard[existingIdx].score) {
-        save.leaderboard[existingIdx] = entry;
-      }
-    } else {
-      save.leaderboard.push(entry);
-    }
-    save.leaderboard.sort((a, b) => b.score - a.score);
-    save.leaderboard = save.leaderboard.slice(0, 20);
-  } else if (summary.chapterId === 88) {
+      updatedAt: getTodayDateKey(),
+    });
+  } else if (summary.mode === 'boss_rush') {
     if (summary.victory) {
       save.bossRushClears = (save.bossRushClears || 0) + 1;
       if (save.bestBossRushSec === 0 || summary.survivedSec < save.bestBossRushSec) {
         save.bestBossRushSec = summary.survivedSec;
       }
     }
+    recordLocalLeaderboardEntry(save, {
+      deviceId: save.deviceId,
+      playerName: save.playerName,
+      mode: 'boss_rush',
+      score: summary.score,
+      wave: summary.bossesKilled,
+      kills: summary.kills,
+      heroId: save.selectedHero,
+      ascension: summary.ascension,
+      isPlayer: true,
+      updatedAt: getTodayDateKey(),
+    });
+  } else if (summary.mode === 'daily') {
+    if (summary.score > save.bestDailyScore) save.bestDailyScore = summary.score;
+    if (summary.victory && summary.dailyDateKey) save.dailyCompletedDate = summary.dailyDateKey;
+    recordLocalLeaderboardEntry(save, {
+      deviceId: save.deviceId,
+      playerName: save.playerName,
+      mode: 'daily',
+      score: summary.score,
+      wave: summary.survivedSec,
+      kills: summary.kills,
+      heroId: save.selectedHero,
+      ascension: summary.ascension,
+      isPlayer: true,
+      updatedAt: summary.dailyDateKey || getTodayDateKey(),
+    });
   } else if (summary.victory) {
     if (!save.clearedChapters.includes(summary.chapterId)) {
       save.clearedChapters.push(summary.chapterId);
@@ -751,89 +853,4 @@ export function applyRunOutcome(save: PlayerSave, summary: RunSummary): void {
   }
 
   saveGame(save);
-}
-
-export function applyPurchaseReward(
-  save: PlayerSave,
-  sku: string
-): { summaryText: string; gemsAdded: number; coinsAdded: number } {
-  const def = SHOP_SKUS.find((s) => s.sku === sku);
-  if (!def) return { summaryText: 'Unknown product', gemsAdded: 0, coinsAdded: 0 };
-
-  let gemsAdded = 0;
-  let coinsAdded = 0;
-
-  if (sku === 'starforge_piggy_bank') {
-    const payout = Math.max(300, save.piggyGems);
-    gemsAdded = payout;
-    save.gems += payout;
-    save.piggyGems = 0;
-  } else {
-    gemsAdded = def.gems || 0;
-    if (def.firstBuyBonusGems && !save.firstBuyUsedSkus.includes(sku)) {
-      gemsAdded += def.firstBuyBonusGems;
-      save.firstBuyUsedSkus.push(sku);
-    }
-    save.gems += gemsAdded;
-  }
-
-  if (def.coins) {
-    coinsAdded = def.coins;
-    save.coins += def.coins;
-  }
-  if (def.keys) {
-    save.cyberKeys += def.keys;
-  }
-  if (def.grantsNoAds) {
-    save.noAdsForever = true;
-  }
-  if (def.grantsPass) {
-    save.passPremiumUnlocked = true;
-  }
-  if (def.grantsVip) {
-    const base = Math.max(Date.now(), save.vipExpiresAt || 0);
-    save.vipExpiresAt = base + 30 * 86_400_000;
-  }
-  if (def.grantsStarterGear) {
-    save.starterPackBought = true;
-    const epicKatana = createGearItem('wp_katana', 'epic', 10);
-    save.inventory.unshift(epicKatana);
-    save.equipped.weapon = epicKatana.uid;
-  }
-  if (def.oneTimeOnly && !save.purchasedSkusOneTime.includes(sku)) {
-    save.purchasedSkusOneTime.push(sku);
-  }
-
-  saveGame(save);
-
-  const parts: string[] = [];
-  if (gemsAdded > 0) parts.push(`+${gemsAdded} Gems`);
-  if (coinsAdded > 0) parts.push(`+${coinsAdded.toLocaleString('en-US')} Gold`);
-  if (def.keys) parts.push(`+${def.keys}x Cyber Key`);
-  if (def.grantsNoAds) parts.push('No Ads Active');
-  if (def.grantsPass) parts.push('Season Pass Unlocked');
-  if (def.grantsVip) parts.push('VIP Club 30 Days');
-  if (def.grantsStarterGear) parts.push('Epic Plasma Katana');
-  return { summaryText: parts.join(' • '), gemsAdded, coinsAdded };
-}
-
-export function applyOwnedEntitledSkus(save: PlayerSave, ownedSkus: string[]): string[] {
-  const restored: string[] = [];
-  for (const sku of ownedSkus) {
-    if (sku === 'starforge_no_ads' && !save.noAdsForever) {
-      save.noAdsForever = true;
-      restored.push('No Ads Forever');
-    } else if (sku === 'starforge_season_pass' && !save.passPremiumUnlocked) {
-      save.passPremiumUnlocked = true;
-      restored.push('Season Pass');
-    } else if (sku === 'starforge_vip_monthly') {
-      save.noAdsForever = true;
-      if (save.vipExpiresAt < Date.now()) {
-        save.vipExpiresAt = Date.now() + 30 * 86_400_000;
-      }
-      restored.push('VIP Club');
-    }
-  }
-  if (restored.length > 0) saveGame(save);
-  return restored;
 }

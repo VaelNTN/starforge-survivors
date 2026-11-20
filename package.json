@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Starforge Survivors - Addictive Sci-Fi Action Roguelite RPG with Google Play Billing & AdMob",
+  "description": "Starforge Survivors - Premium Sci-Fi Action Roguelite RPG (Zero Ads, Zero IAP)",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

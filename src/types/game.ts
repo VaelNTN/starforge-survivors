@@ -2,7 +2,7 @@ export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'my
 
 export type GearSlot = 'weapon' | 'armor' | 'helmet' | 'boots' | 'ring' | 'core';
 
-export type WeaponStyle = 'sword' | 'staff' | 'bow';
+export type WeaponStyle = 'signature' | 'sword' | 'staff' | 'bow';
 
 export type WeaponId =
   | 'plasma_blade'
@@ -14,7 +14,9 @@ export type WeaponId =
   | 'frost_nova'
   | 'inferno_drone'
   | 'gravity_well'
-  | 'vamp_scythe';
+  | 'vamp_scythe'
+  | 'orbital_turret'
+  | 'solar_lance';
 
 export type PassiveId =
   | 'chrono_core'
@@ -26,7 +28,47 @@ export type PassiveId =
   | 'dark_matter'
   | 'blood_ruby';
 
-export type HeroId = 'kael' | 'nova' | 'titan' | 'vespera';
+export type HeroId = 'kael' | 'nova' | 'titan' | 'vespera' | 'aegis' | 'pyro';
+
+export type RelicId =
+  | 'plasma_mines'
+  | 'chain_crit'
+  | 'nova_burst'
+  | 'vampiric_core'
+  | 'overclock_shield'
+  | 'mag_singularity'
+  | 'frost_retaliation'
+  | 'executioner_mark'
+  | 'solar_afterburn'
+  | 'quantum_accel';
+
+export type AscensionTier = 1 | 2 | 3 | 4 | 5;
+
+export type BossArchetype = 1 | 2 | 3 | 4 | 5 | 6;
+
+export type LeaderboardMode = 'endless' | 'boss_rush' | 'daily';
+
+export type DailyModifierId =
+  | 'hyper_haste'
+  | 'glass_cannon'
+  | 'swarm_frenzy'
+  | 'crit_storm'
+  | 'titan_bosses'
+  | 'low_gravity';
+
+export interface DailyModifierDef {
+  id: DailyModifierId;
+  name: string;
+  desc: string;
+  color: string;
+}
+
+export interface DailyRunConfig {
+  dateKey: string;
+  seed: number;
+  themeChapterId: number;
+  modifiers: DailyModifierDef[];
+}
 
 export interface HeroDef {
   id: HeroId;
@@ -42,7 +84,6 @@ export interface HeroDef {
   baseAtk: number;
   baseSpeed: number;
   unlockCostGems: number;
-  unlockChapterReq?: number;
   perkLabel: string;
 }
 
@@ -57,6 +98,7 @@ export interface WeaponDef {
   maxLevel: number;
   baseDamage: number;
   baseCooldownMs: number;
+  isProjectile?: boolean;
 }
 
 export interface PassiveDef {
@@ -66,6 +108,25 @@ export interface PassiveDef {
   perLevelLabel: string;
   color: string;
   maxLevel: number;
+}
+
+export interface RelicDef {
+  id: RelicId;
+  name: string;
+  shortDesc: string;
+  color: string;
+}
+
+export interface AscensionDef {
+  tier: AscensionTier;
+  roman: string;
+  name: string;
+  subtitle: string;
+  enemyHpMult: number;
+  enemyDmgMult: number;
+  spawnMult: number;
+  rewardMult: number;
+  color: string;
 }
 
 export interface GearItem {
@@ -84,7 +145,7 @@ export interface ChapterDef {
   id: number;
   name: string;
   subtitle: string;
-  mode: 'chapter' | 'endless' | 'boss_rush';
+  mode: 'chapter' | 'endless' | 'boss_rush' | 'daily';
   durationSec: number;
   recommendedPower: number;
   bgTop: string;
@@ -97,13 +158,14 @@ export interface ChapterDef {
   rewardCoins: number;
   rewardGems: number;
   bossName: string;
+  bossArchetype: BossArchetype;
 }
 
 export interface TalentNodeDef {
   id: string;
   name: string;
   desc: string;
-  icon: string;
+  iconKey: string;
   maxLevel: number;
   baseCostCoins: number;
   costStepCoins: number;
@@ -117,7 +179,9 @@ export interface TalentNodeDef {
     | 'critPct'
     | 'hastePct'
     | 'revives'
-    | 'xpPct';
+    | 'xpPct'
+    | 'rerolls'
+    | 'banishes';
   perLevelValue: number;
 }
 
@@ -126,41 +190,22 @@ export interface QuestProgress {
   runsToday: number;
   bossesToday: number;
   upgradesToday: number;
-  adsToday: number;
+  objectivesToday: number;
   claimedIds: string[];
 }
 
 export interface LeaderboardEntry {
   rank?: number;
-  name: string;
+  deviceId?: string;
+  playerName: string;
+  mode: LeaderboardMode;
   score: number;
   wave: number;
+  kills: number;
   heroId: HeroId;
-  power: number;
+  ascension: AscensionTier;
   isPlayer?: boolean;
-  date: string;
-}
-
-export interface ShopSkuDef {
-  sku: string;
-  productType: 'inapp' | 'subs';
-  isConsumable: boolean;
-  category: 'bundle' | 'gems' | 'vip' | 'pass';
-  title: string;
-  subtitle: string;
-  badge?: string;
-  fallbackPrice: string;
-  priceEur: number;
-  gems?: number;
-  firstBuyBonusGems?: number;
-  coins?: number;
-  keys?: number;
-  grantsNoAds?: boolean;
-  grantsPass?: boolean;
-  grantsVip?: boolean;
-  grantsStarterGear?: boolean;
-  oneTimeOnly?: boolean;
-  highlightColor: string;
+  updatedAt?: string;
 }
 
 export interface PlayerSave {
@@ -170,18 +215,16 @@ export interface PlayerSave {
   accountLevel: number;
   accountXp: number;
   coins: number;
-  gems: number;
+  gems: number; // Displayed as Star Shards
   blueprints: number;
   basicKeys: number;
   cyberKeys: number;
   reviveTokens: number;
-  rerollTokens: number;
-  piggyGems: number;
-  piggyMaxGems: number;
   pityCounter: number;
 
   selectedHero: HeroId;
   selectedWeaponStyle: WeaponStyle;
+  selectedAscension: AscensionTier;
   unlockedHeroes: HeroId[];
   heroLevels: Record<HeroId, number>;
 
@@ -191,22 +234,20 @@ export interface PlayerSave {
 
   highestChapterUnlocked: number;
   clearedChapters: number[];
+  highestAscensionCleared: AscensionTier;
   bestEndlessSec: number;
   bestEndlessKills: number;
+  bestBossRushSec: number;
+  bossRushClears: number;
+  bestDailyScore: number;
+  dailyCompletedDate: string;
   totalKills: number;
   totalRuns: number;
   totalBossesKilled: number;
+  totalShrinesClaimed: number;
 
   passXp: number;
-  passPremiumUnlocked: boolean;
-  passClaimedFree: number[];
-  passClaimedPremium: number[];
-
-  noAdsForever: boolean;
-  vipExpiresAt: number;
-  starterPackBought: boolean;
-  purchasedSkusOneTime: string[];
-  firstBuyUsedSkus: string[];
+  passClaimedTiers: number[];
 
   lastLoginDay: string;
   loginStreak: number;
@@ -214,27 +255,22 @@ export interface PlayerSave {
 
   lastDailyDay: string;
   freeGiftClaimedToday: boolean;
-  adGemsUsedToday: number;
-  adKeysUsedToday: number;
   wheelSpinsFreeUsedToday: number;
-  wheelSpinsAdUsedToday: number;
-  pendingVipDailyGems: number;
   quests: QuestProgress;
   claimedAchievements: string[];
   discoveredEvos: WeaponId[];
   claimedEvoCodex: WeaponId[];
-  bestBossRushSec: number;
-  bossRushClears: number;
+  discoveredRelics: RelicId[];
+  defeatedBosses: BossArchetype[];
 
   lastPatrolCollectAt: number;
-  lastInterstitialAt: number;
 
   soundEnabled: boolean;
   musicEnabled: boolean;
   vibrationEnabled: boolean;
   damageNumbersEnabled: boolean;
 
-  leaderboard: LeaderboardEntry[];
+  localLeaderboard: Record<LeaderboardMode, LeaderboardEntry[]>;
 }
 
 export interface ActiveRunBoosters {
@@ -251,20 +287,38 @@ export interface CombatStats {
   critChance: number;
   critMult: number;
   cooldownMult: number;
+  projPowerMult: number;
+  dodgeChance: number;
+  areaMult: number;
   pickupRadius: number;
   goldMult: number;
   xpMult: number;
   hpRegenPerSec: number;
   revives: number;
+  rerolls: number;
+  banishes: number;
   powerRating: number;
+}
+
+export interface WeaponDamageStat {
+  id: string;
+  label: string;
+  color: string;
+  totalDamage: number;
+  dps: number;
+  sharePct: number;
 }
 
 export interface RunSummary {
   chapterId: number;
+  mode: ChapterDef['mode'];
+  ascension: AscensionTier;
+  dailyDateKey?: string;
   victory: boolean;
   survivedSec: number;
   kills: number;
   bossesKilled: number;
+  shrinesClaimed: number;
   coinsEarned: number;
   gemsEarned: number;
   blueprintsEarned: number;
@@ -274,6 +328,51 @@ export interface RunSummary {
   newGearDrop: GearItem | null;
   evolutionsUnlocked: string[];
   evoIdsUnlocked: WeaponId[];
+  relicsCollected: RelicId[];
+  bossArchetypesDefeated: BossArchetype[];
   maxCombo: number;
-  doubledByAd: boolean;
+  score: number;
+  weaponBreakdown: WeaponDamageStat[];
+}
+
+export interface SavedRunSnapshot {
+  version: number;
+  savedAt: number;
+  chapterId: number;
+  ascension: AscensionTier;
+  dailyDateKey?: string;
+  heroId: HeroId;
+  weaponStyle: WeaponStyle;
+  boosters: ActiveRunBoosters;
+  px: number;
+  py: number;
+  hp: number;
+  shieldHp: number;
+  level: number;
+  xp: number;
+  xpNext: number;
+  elapsedSec: number;
+  threatLevel: number;
+  lastSurgeSec: number;
+  kills: number;
+  maxCombo: number;
+  bossesKilled: number;
+  shrinesClaimed: number;
+  coinsEarned: number;
+  gemsEarned: number;
+  ultCharge: number;
+  revivesLeft: number;
+  rerollsLeft: number;
+  banishesLeft: number;
+  bossSpawned: boolean;
+  bossRushStage: number;
+  eliteSpawnedMin: number[];
+  weapons: { id: WeaponId; lv: number; evolved: boolean }[];
+  passives: { id: PassiveId; lv: number }[];
+  relics: RelicId[];
+  banishedIds: string[];
+  evosUnlocked: string[];
+  evoIdsUnlocked: WeaponId[];
+  bossArchetypesDefeated: BossArchetype[];
+  weaponDamage: Record<string, number>;
 }
