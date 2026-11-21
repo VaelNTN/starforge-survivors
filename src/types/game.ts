@@ -270,7 +270,43 @@ export interface PlayerSave {
   vibrationEnabled: boolean;
   damageNumbersEnabled: boolean;
 
+  // Hybrid Monetization & Retention State
+  noAdsOwned: boolean;
+  seasonPassOwned: boolean;
+  vipActive: boolean;
+  vipLastClaimDay: string;
+  starterPackPurchased: boolean;
+  firstPurchaseBonusClaimed: boolean;
+  purchasedSkus: string[];
+  passPremiumClaimedTiers: number[];
+  adGemsUsedToday: number;
+  adKeysUsedToday: number;
+  lastInterstitialAt: number;
+  sevenDayClaimedDays: number[];
+
   localLeaderboard: Record<LeaderboardMode, LeaderboardEntry[]>;
+}
+
+export interface ShopSkuDef {
+  sku: string;
+  productType: 'inapp' | 'subs';
+  isConsumable: boolean;
+  category: 'bundle' | 'vip' | 'pass' | 'gems';
+  title: string;
+  subtitle: string;
+  badge: string;
+  fallbackPrice: string;
+  priceEur: number;
+  gems?: number;
+  coins?: number;
+  keys?: number;
+  firstTimeBonusGems?: number;
+  grantsNoAds?: boolean;
+  grantsPass?: boolean;
+  grantsVip?: boolean;
+  grantsStarterGear?: boolean;
+  oneTimeOnly?: boolean;
+  highlightColor: string;
 }
 
 export interface ActiveRunBoosters {

@@ -1140,6 +1140,15 @@ export class SurvivorEngine {
     };
   }
 
+  useBonusReroll(): { options: DraftOption[]; rerollsLeft: number; banishesLeft: number } {
+    audio.playTap();
+    return {
+      options: this.buildDraftOptions(),
+      rerollsLeft: this.rerollsLeft,
+      banishesLeft: this.banishesLeft,
+    };
+  }
+
   banishOption(opt: DraftOption): { options: DraftOption[]; rerollsLeft: number; banishesLeft: number } | null {
     if (this.banishesLeft <= 0 || opt.kind === 'heal_coins' || opt.kind === 'evo') return null;
     this.banishesLeft -= 1;

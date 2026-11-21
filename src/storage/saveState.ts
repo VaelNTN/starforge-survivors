@@ -9,6 +9,7 @@ import {
   WheelSliceDef,
   getTodayDateKey,
 } from '../data/gameCatalog';
+import { SEVEN_DAY_LOGIN_REWARDS, SHOP_SKUS } from '../config/monetization';
 import {
   AscensionTier,
   CombatStats,
@@ -136,6 +137,19 @@ export function createDefaultSave(): PlayerSave {
     vibrationEnabled: true,
     damageNumbersEnabled: true,
 
+    noAdsOwned: false,
+    seasonPassOwned: false,
+    vipActive: false,
+    vipLastClaimDay: '',
+    starterPackPurchased: false,
+    firstPurchaseBonusClaimed: false,
+    purchasedSkus: [],
+    passPremiumClaimedTiers: [],
+    adGemsUsedToday: 0,
+    adKeysUsedToday: 0,
+    lastInterstitialAt: 0,
+    sevenDayClaimedDays: [],
+
     localLeaderboard: {
       endless: [],
       boss_rush: [],
@@ -251,6 +265,12 @@ export function loadSave(): PlayerSave {
       claimedEvoCodex: Array.isArray(parsed.claimedEvoCodex) ? parsed.claimedEvoCodex : [],
       discoveredRelics: Array.isArray(parsed.discoveredRelics) ? parsed.discoveredRelics : [],
       defeatedBosses: Array.isArray(parsed.defeatedBosses) ? parsed.defeatedBosses : [],
+      purchasedSkus: Array.isArray(parsed.purchasedSkus) ? parsed.purchasedSkus : [],
+      passPremiumClaimedTiers: Array.isArray(parsed.passPremiumClaimedTiers) ? parsed.passPremiumClaimedTiers : [],
+      sevenDayClaimedDays: Array.isArray(parsed.sevenDayClaimedDays) ? parsed.sevenDayClaimedDays : [],
+      adGemsUsedToday: Math.floor(safeNum(parsed.adGemsUsedToday, 0, 0)),
+      adKeysUsedToday: Math.floor(safeNum(parsed.adKeysUsedToday, 0, 0)),
+      lastInterstitialAt: safeNum(parsed.lastInterstitialAt, 0, 0),
       inventory: inv,
       localLeaderboard: {
         endless: Array.isArray(localLb.endless) ? localLb.endless : [],
@@ -438,6 +458,16 @@ export function computePlayerStats(save: PlayerSave): CombatStats {
     if (item.templateId === 'rg_greed') goldMult += 0.15;
     if (item.templateId === 'cr_quantum') cooldownReduction += 0.06;
     if (item.templateId === 'cr_phoenix') hpRegenPerSec += 2.5;
+  }
+
+  // Permanent No-Ads & VIP Commander Club perks
+  if (save.noAdsOwned) {
+    goldMult += 1.0; // Permanent 2x Run Gold
+  }
+  if (save.vipActive) {
+    goldMult += 0.25;
+    xpMult += 0.25;
+    pickupRadius *= 1.35;
   }
 
   const finalMaxHp = Math.round(maxHp);
@@ -854,3 +884,107 @@ export function applyRunOutcome(save: PlayerSave, summary: RunSummary): void {
 
   saveGame(save);
 }
+
+export function applyPurchasedSku(save: PlayerSave, skuId: string): { ok: boolean; summary: string } {
+  const def = SHOP_SKUS.find((s) => s.sku === skuId);
+  if (!def) return { ok: false, summary: 'Unknown product' };
+  if (def.oneTimeOnly && save.purchasedSkus.includes(skuId)) {
+    // Still re-ensure permanent entitlements on restore
+    if (def.grantsNoAds) save.noAdsOwned = true;
+    if (def.grantsPass) save.seasonPassOwned = true;
+    if (def.grantsVip) {
+      save.vipActive = true;
+      save.noAdsOwned = true;
+    }
+    saveGame(save);
+    return { ok: true, summary: `${def.title} restored!` };
+  }
+
+  const parts: string[] = [];
+  let totalGems = def.gems || 0;
+  if (def.firstTimeBonusGems && !save.purchasedSkus.includes(skuId)) {
+    totalGems += def.firstTimeBonusGems;
+  }
+  if (totalGems > 0) {
+    save.gems += totalGems;
+    parts.push(`+${totalGems} Shards`);
+  }
+  if (def.coins) {
+    save.coins += def.coins;
+    parts.push(`+${def.coins.toLocaleString()} Gold`);
+  }
+  if (def.keys) {
+    save.cyberKeys += def.keys;
+    parts.push(`+${def.keys} Cyber Keys`);
+  }
+  if (def.grantsStarterGear) {
+    const katana = createGearItem('wp_katana', 'epic', 1);
+    save.inventory.unshift(katana);
+    save.equipped.weapon = katana.uid;
+    save.starterPackPurchased = true;
+    parts.push('Epic Plasma Katana');
+  }
+  if (def.grantsNoAds) {
+    save.noAdsOwned = true;
+    parts.push('No Ads + 2× Gold Forever');
+  }
+  if (def.grantsPass) {
+    save.seasonPassOwned = true;
+    parts.push('Premium Season Pass');
+  }
+  if (def.grantsVip) {
+    save.vipActive = true;
+    save.noAdsOwned = true;
+    parts.push('VIP Club Active');
+  }
+
+  // First-Purchase Bonus: Any first real purchase grants +300 Bonus Shards + 2 Cyber Keys!
+  if (!save.firstPurchaseBonusClaimed) {
+    save.firstPurchaseBonusClaimed = true;
+    save.gems += 300;
+    save.cyberKeys += 2;
+    parts.push('FIRST-BUY BONUS: +300 Shards & 2 Keys!');
+  }
+
+  if (!save.purchasedSkus.includes(skuId)) {
+    save.purchasedSkus.push(skuId);
+  }
+  saveGame(save);
+  return { ok: true, summary: parts.join(' • ') };
+}
+
+export function claimSevenDayLogin(save: PlayerSave): { ok: boolean; day: number; label: string } {
+  const day = Math.max(1, Math.min(7, save.loginStreak || 1));
+  if (save.loginClaimedToday) {
+    return { ok: false, day, label: 'Already claimed today' };
+  }
+  const reward = SEVEN_DAY_LOGIN_REWARDS[day - 1] || SEVEN_DAY_LOGIN_REWARDS[0];
+  if (reward.coins) save.coins += reward.coins;
+  if (reward.gems) save.gems += reward.gems;
+  if (reward.cyberKeys) save.cyberKeys += reward.cyberKeys;
+  if (reward.epicGear) {
+    const item = createGearItem('ar_aegis', 'epic', 1);
+    save.inventory.unshift(item);
+  }
+  if (reward.legendaryGear) {
+    const item = createGearItem('wp_voidcannon', 'legendary', 1);
+    save.inventory.unshift(item);
+  }
+  save.loginClaimedToday = true;
+  if (!save.sevenDayClaimedDays.includes(day)) {
+    save.sevenDayClaimedDays.push(day);
+  }
+  saveGame(save);
+  return { ok: true, day, label: reward.label };
+}
+
+export function claimVipDailyShards(save: PlayerSave): { ok: boolean; amount: number } {
+  if (!save.vipActive) return { ok: false, amount: 0 };
+  const today = getTodayDateKey();
+  if (save.vipLastClaimDay === today) return { ok: false, amount: 0 };
+  save.vipLastClaimDay = today;
+  save.gems += 100;
+  saveGame(save);
+  return { ok: true, amount: 100 };
+}
+

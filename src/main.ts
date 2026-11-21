@@ -24,11 +24,15 @@ import {
   getTodayDateKey,
 } from './data/gameCatalog';
 import { DraftOption, HudSnapshot, SurvivorEngine } from './engine/survivorEngine';
+import { ADMOB_CONFIG, SHOP_SKUS } from './config/monetization';
 import { audio } from './services/audio';
+import { monetizationBridge } from './services/billing';
 import { fetchOnlineLeaderboard, submitOnlineScore } from './services/leaderboard';
 import {
+  applyPurchasedSku,
   applyRunOutcome,
   autoMergeAllGear,
+  claimVipDailyShards,
   clearActiveRun,
   collectPatrolEarnings,
   computePatrolEarnings,
@@ -79,7 +83,7 @@ import {
 type MainTab = 'battle' | 'heroes' | 'forge' | 'mastery' | 'vault';
 type ForgeSubTab = 'gear' | 'crates' | 'talents';
 type MasterySubTab = 'track' | 'quests' | 'achievements';
-type VaultSubTab = 'evos' | 'relics' | 'bosses';
+type VaultSubTab = 'store' | 'evos' | 'relics' | 'bosses';
 
 type ModalState =
   | null
@@ -98,7 +102,7 @@ type ModalState =
   | { kind: 'gear_detail'; uid: string }
   | { kind: 'crate_result'; drops: GearItem[]; title: string }
   | { kind: 'resume_run'; snapshot: SavedRunSnapshot }
-  | { kind: 'run_summary'; summary: RunSummary };
+  | { kind: 'run_summary'; summary: RunSummary; doubled?: boolean };
 
 class StarforgeApp {
   private root: HTMLElement;
@@ -106,7 +110,7 @@ class StarforgeApp {
   private tab: MainTab = 'battle';
   private forgeSub: ForgeSubTab = 'gear';
   private masterySub: MasterySubTab = 'track';
-  private vaultSub: VaultSubTab = 'evos';
+  private vaultSub: VaultSubTab = 'store';
   private selectedChapterId = 1;
   private modal: ModalState = null;
   private boosters: ActiveRunBoosters = { extraWeapon: false, overdriveAtk: false, doubleLuck: false };
@@ -146,6 +150,19 @@ class StarforgeApp {
     }
 
     this.render();
+
+    // Initialize Google Play Billing & AdMob in background and restore owned passes
+    void monetizationBridge.initAll().then(async () => {
+      const owned = await monetizationBridge.restorePurchases();
+      let changed = false;
+      for (const sku of owned) {
+        if (!this.save.purchasedSkus.includes(sku)) {
+          applyPurchasedSku(this.save, sku);
+          changed = true;
+        }
+      }
+      if (changed && !this.inBattle) this.render();
+    });
   }
 
   private showToast(msg: string): void {
@@ -596,8 +613,8 @@ class StarforgeApp {
             ${this.hasUnclaimedMasteryTab() ? '<span class="nav-dot"></span>' : ''}
           </button>
           <button class="nav-btn ${this.tab === 'vault' ? 'active' : ''}" data-tab="vault">
-            <span class="ico">${uiIconSvg('vault', 19)}</span><span>Codex</span>
-            ${unclaimedVault ? '<span class="nav-dot"></span>' : ''}
+            <span class="ico">${uiIconSvg('vault', 19)}</span><span>Store</span>
+            ${unclaimedVault || !this.save.freeGiftClaimedToday ? '<span class="nav-dot"></span>' : ''}
           </button>
         </nav>
 
@@ -1032,19 +1049,28 @@ class StarforgeApp {
   private renderMasteryTrack(): string {
     const curTier = Math.min(30, Math.floor(this.save.passXp / 100));
     const canClaimAny = this.hasUnclaimedMasteryTiers();
+    const passOwned = this.save.seasonPassOwned;
+    const passPrice = monetizationBridge.getDisplayPrice('starforge_season_pass', '€6.99');
 
     return `
       <div class="card glow-purple">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
           <div>
-            <strong style="font-size:15px;">Starforge Mastery Track • Tier ${curTier}/30</strong>
-            <div style="font-size:11px;color:var(--muted);">Mastery XP: ${this.save.passXp} — All 30 Premium Tiers included free!</div>
+            <strong style="font-size:15px;">Starforge Season Pass • Tier ${curTier}/30</strong>
+            <div style="font-size:11px;color:var(--muted);">Mastery XP: ${this.save.passXp} — ${passOwned ? 'Premium Track UNLOCKED!' : 'Unlock Premium Track for +2,800 bonus Shards & Cyber Keys!'}</div>
           </div>
-          ${
-            canClaimAny
-              ? `<button class="btn btn-green" id="btn-claim-all-mastery" style="padding:7px 12px;font-size:12px;">${uiIconSvg('gift', 14)} Claim All</button>`
-              : `<span class="badge-tag" style="background:rgba(56,189,248,0.2);color:var(--cyan);">100% UNLOCKED</span>`
-          }
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${
+              !passOwned
+                ? `<button class="btn btn-amber" data-buy-sku="starforge_season_pass" style="padding:7px 12px;font-size:12px;">${uiIconSvg('crown', 14)} Unlock Pass ${this.esc(passPrice)}</button>`
+                : `<span class="badge-tag" style="background:rgba(139,92,246,0.28);color:#ddd6fe;">PREMIUM ACTIVE</span>`
+            }
+            ${
+              canClaimAny
+                ? `<button class="btn btn-green" id="btn-claim-all-mastery" style="padding:7px 12px;font-size:12px;">${uiIconSvg('gift', 14)} Claim All</button>`
+                : ''
+            }
+          </div>
         </div>
         <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, Math.round((this.save.passXp / 3000) * 100))}%;"></div></div>
       </div>
@@ -1053,16 +1079,29 @@ class StarforgeApp {
         ${MASTERY_TIERS.map((mt) => {
           const unlocked = this.save.passXp >= mt.xpRequired;
           const claimed = this.save.passClaimedTiers.includes(mt.tier);
+          const premClaimed = this.save.passPremiumClaimedTiers.includes(mt.tier);
+          const premShards = mt.isMilestone ? 200 : 75;
+          const premLabel = mt.isMilestone ? `+${premShards} Shards + 1 Cyber Key` : `+${premShards} Shards`;
           return `
-            <div class="card ${mt.isMilestone ? 'glow-amber' : ''}" style="padding:9px 12px;">
+            <div class="card ${mt.isMilestone ? 'glow-amber' : ''}" style="padding:9px 12px;gap:6px;">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;">
                 <div>
                   <strong style="color:${mt.isMilestone ? '#fbbf24' : 'var(--text)'};">Tier ${mt.tier} ${mt.isMilestone ? '• MILESTONE' : ''}</strong>
-                  <div style="font-size:11px;color:var(--cyan);font-weight:700;">${mt.label}</div>
+                  <div style="font-size:11px;color:var(--cyan);font-weight:700;">FREE: ${mt.label}</div>
                 </div>
                 <button class="btn ${claimed ? 'btn-ghost' : unlocked ? 'btn-green' : 'btn-ghost'}" style="padding:6px 12px;font-size:11px;flex-shrink:0;" data-claim-mastery="${mt.tier}" ${!unlocked || claimed ? 'disabled' : ''}>
                   ${claimed ? 'Claimed' : unlocked ? 'Claim' : `${mt.xpRequired} XP`}
                 </button>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;padding-top:5px;border-top:1px solid rgba(148,163,184,0.14);">
+                <div style="color:#c084fc;font-weight:800;">★ PASS: ${premLabel}</div>
+                ${
+                  passOwned
+                    ? `<button class="btn ${premClaimed ? 'btn-ghost' : unlocked ? 'btn-amber' : 'btn-ghost'}" style="padding:4px 10px;font-size:10px;" data-claim-prem-mastery="${mt.tier}" ${!unlocked || premClaimed ? 'disabled' : ''}>
+                        ${premClaimed ? 'Claimed' : unlocked ? 'Claim Pass' : 'Locked'}
+                      </button>`
+                    : `<button class="btn btn-ghost" style="padding:4px 10px;font-size:10px;border-color:rgba(192,132,252,0.45);color:#ddd6fe;" data-buy-sku="starforge_season_pass">Unlock</button>`
+                }
               </div>
             </div>
           `;
@@ -1122,25 +1161,101 @@ class StarforgeApp {
   }
 
   private renderVaultTab(): string {
-    return `
-      <div class="card glow-cyan" style="flex-direction:row;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-        <div>
-          <strong style="font-size:14px;">Daily Starforge Supply Grant</strong>
-          <div style="font-size:11px;color:var(--muted);">Premium Edition daily stipend — +1,500 Gold & +50 Star Shards</div>
-        </div>
-        <button class="btn ${this.save.freeGiftClaimedToday ? 'btn-ghost' : 'btn-green'}" id="btn-free-daily-gift" ${this.save.freeGiftClaimedToday ? 'disabled' : ''}>
-          ${this.save.freeGiftClaimedToday ? `${uiIconSvg('check', 14)} Claimed Today` : `${uiIconSvg('gift', 14)} Claim Grant`}
-        </button>
-      </div>
+    const hasNoAds = this.save.noAdsOwned || this.save.vipActive;
+    const adGemsLeft = Math.max(0, ADMOB_CONFIG.dailyAdGemsLimit - this.save.adGemsUsedToday);
+    const adKeysLeft = Math.max(0, ADMOB_CONFIG.dailyAdKeysLimit - this.save.adKeysUsedToday);
+    const vipClaimedToday = this.save.vipLastClaimDay === getTodayDateKey();
 
+    return `
       <div class="subtabs">
+        <button class="subtab ${this.vaultSub === 'store' ? 'active' : ''}" data-vault-sub="store">★ Store</button>
         <button class="subtab ${this.vaultSub === 'evos' ? 'active' : ''}" data-vault-sub="evos">Evos (${this.save.discoveredEvos.length}/${WEAPONS.length})</button>
         <button class="subtab ${this.vaultSub === 'relics' ? 'active' : ''}" data-vault-sub="relics">Relics (${this.save.discoveredRelics.length}/${RELICS.length})</button>
         <button class="subtab ${this.vaultSub === 'bosses' ? 'active' : ''}" data-vault-sub="bosses">Bosses (${this.save.defeatedBosses.length}/6)</button>
       </div>
 
       ${
-        this.vaultSub === 'evos'
+        this.vaultSub === 'store'
+          ? `
+            ${
+              !this.save.firstPurchaseBonusClaimed
+                ? `
+                  <div class="card glow-amber" style="flex-direction:row;align-items:center;justify-content:space-between;gap:10px;">
+                    <div>
+                      <strong style="font-size:13px;color:#fbbf24;">★ FIRST-PURCHASE BONUS ACTIVE</strong>
+                      <div style="font-size:11px;color:var(--text);">Any Store purchase also grants <b>+300 Bonus Shards & 2× Cyber Keys</b> FREE!</div>
+                    </div>
+                  </div>
+                `
+                : ''
+            }
+
+            ${
+              this.save.vipActive
+                ? `
+                  <div class="card glow-purple" style="flex-direction:row;align-items:center;justify-content:space-between;gap:10px;">
+                    <div>
+                      <strong style="font-size:13px;color:#f472b6;">VIP Commander Daily Allowance</strong>
+                      <div style="font-size:11px;color:var(--muted);">+100 Star Shards every day • +25% XP & Gold active</div>
+                    </div>
+                    <button class="btn ${vipClaimedToday ? 'btn-ghost' : 'btn-amber'}" id="btn-vip-daily-claim" ${vipClaimedToday ? 'disabled' : ''}>
+                      ${vipClaimedToday ? 'Claimed' : '+100 Shards'}
+                    </button>
+                  </div>
+                `
+                : ''
+            }
+
+            <div class="card glow-cyan" style="gap:8px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                <div>
+                  <strong style="font-size:14px;">Daily Free Supplies</strong>
+                  <div style="font-size:11px;color:var(--muted);">Free daily grant + ${hasNoAds ? 'instant No-Ads claims!' : 'optional Rewarded Video supplies'}</div>
+                </div>
+                <button class="btn ${this.save.freeGiftClaimedToday ? 'btn-ghost' : 'btn-green'}" id="btn-free-daily-gift" style="padding:6px 11px;font-size:11px;" ${this.save.freeGiftClaimedToday ? 'disabled' : ''}>
+                  ${this.save.freeGiftClaimedToday ? `${uiIconSvg('check', 13)} Claimed` : `${uiIconSvg('gift', 13)} +1.5K Gold & 50 Shards`}
+                </button>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-primary" id="btn-ad-free-gems" style="flex:1;min-width:140px;font-size:11px;padding:7px 10px;" ${adGemsLeft <= 0 ? 'disabled' : ''}>
+                  ${hasNoAds ? '⚡' : '📺'} +${ADMOB_CONFIG.dailyAdGemsAmount} Shards (${adGemsLeft}/${ADMOB_CONFIG.dailyAdGemsLimit})
+                </button>
+                <button class="btn btn-amber" id="btn-ad-free-key" style="flex:1;min-width:140px;font-size:11px;padding:7px 10px;" ${adKeysLeft <= 0 ? 'disabled' : ''}>
+                  ${hasNoAds ? '⚡' : '📺'} +1 Cyber Key (${adKeysLeft}/${ADMOB_CONFIG.dailyAdKeysLimit})
+                </button>
+              </div>
+            </div>
+
+            <div class="heroes-grid">
+              ${SHOP_SKUS.map((sku) => {
+                const owned = Boolean(sku.oneTimeOnly && this.save.purchasedSkus.includes(sku.sku));
+                const displayPrice = monetizationBridge.getDisplayPrice(sku.sku, sku.fallbackPrice);
+                const firstBonus =
+                  sku.firstTimeBonusGems && !this.save.purchasedSkus.includes(sku.sku)
+                    ? ` (+${sku.firstTimeBonusGems} 1st-Buy)`
+                    : '';
+                return `
+                  <div class="card" style="border-color:${sku.highlightColor}88;gap:7px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                      <strong style="font-size:14px;color:${sku.highlightColor};">${this.esc(sku.title)}</strong>
+                      <span class="badge-tag" style="background:${sku.highlightColor}28;color:${sku.highlightColor};">${this.esc(sku.badge)}</span>
+                    </div>
+                    <div style="font-size:11px;color:var(--muted);line-height:1.35;">${this.esc(sku.subtitle)}${firstBonus}</div>
+                    <button class="btn ${owned ? 'btn-ghost' : 'btn-primary'}" style="${owned ? '' : `background:linear-gradient(135deg,${sku.highlightColor},#0f172a);border-color:${sku.highlightColor};`}" data-buy-sku="${sku.sku}" ${owned ? 'disabled' : ''}>
+                      ${owned ? `${uiIconSvg('check', 14)} OWNED` : `Buy • ${this.esc(displayPrice)}`}
+                    </button>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+
+            <div style="display:flex;justify-content:center;padding:4px 0 8px;">
+              <button class="btn btn-ghost" id="btn-restore-purchases" style="font-size:11px;padding:6px 14px;">
+                Restore Google Play Purchases
+              </button>
+            </div>
+          `
+          : this.vaultSub === 'evos'
           ? `
             <div class="heroes-grid">
               ${WEAPONS.map((w) => {
@@ -1382,9 +1497,15 @@ class StarforgeApp {
               })
               .join('')}
             <div style="display:flex;gap:8px;justify-content:center;align-items:center;">
-              <button class="btn btn-ghost" id="btn-draft-reroll" style="flex:1;" ${m.rerollsLeft <= 0 ? 'disabled' : ''}>
-                ${uiIconSvg('reroll', 14, '#38bdf8')} Reroll (${m.rerollsLeft})
-              </button>
+              ${
+                m.rerollsLeft > 0
+                  ? `<button class="btn btn-ghost" id="btn-draft-reroll" style="flex:1;">
+                      ${uiIconSvg('reroll', 14, '#38bdf8')} Reroll (${m.rerollsLeft})
+                    </button>`
+                  : `<button class="btn btn-amber" id="btn-draft-ad-reroll" style="flex:1;">
+                      ${this.save.noAdsOwned || this.save.vipActive ? '⚡ Free Reroll (No-Ads)' : '📺 Watch Ad for Reroll'}
+                    </button>`
+              }
               <span class="badge-tag" style="background:rgba(244,63,94,0.16);color:#fda4af;padding:7px 10px;">
                 ${uiIconSvg('banish', 12, '#fda4af')} Banishes: ${m.banishesLeft}
               </span>
@@ -1438,12 +1559,16 @@ class StarforgeApp {
         </div>
       `;
     } else if (m?.kind === 'revive') {
+      const hasNoAds = this.save.noAdsOwned || this.save.vipActive;
       html += `
         <div class="modal-backdrop">
           <div class="modal-card" style="border-color:var(--rose);text-align:center;">
             <div>${uiIconSvg('skull', 36, '#f43f5e')}</div>
-            <div style="font-size:20px;font-weight:900;">SYSTEMS CRITICAL</div>
+            <div style="font-size:20px;font-weight:900;">SECOND CHANCE</div>
             <div style="font-size:12px;color:var(--muted);">Revive with 100% HP & a clearing shockwave!</div>
+            <button class="btn btn-green" id="btn-revive-ad">
+              ${hasNoAds ? '⚡ FREE REVIVE (No-Ads Perk)' : '📺 Watch Ad to Revive (FREE)'}
+            </button>
             <button class="btn btn-primary" id="btn-revive-token" ${this.save.reviveTokens < 1 && this.save.gems < 35 ? 'disabled' : ''}>
               ${
                 this.save.reviveTokens > 0
@@ -1548,6 +1673,23 @@ class StarforgeApp {
       }
     });
 
+    slot.querySelector('#btn-draft-ad-reroll')?.addEventListener('click', async () => {
+      if (this.battleModal?.kind !== 'draft' || !this.engine) return;
+      const res = await monetizationBridge.showRewardedAd('levelup_reroll', this.save.noAdsOwned || this.save.vipActive);
+      if (!res.rewarded) {
+        this.showToast('Ad not completed');
+        return;
+      }
+      const next = this.engine.useBonusReroll();
+      this.battleModal = {
+        kind: 'draft',
+        options: next.options,
+        rerollsLeft: next.rerollsLeft,
+        banishesLeft: next.banishesLeft,
+      };
+      this.renderBattleOverlays();
+    });
+
     slot.querySelectorAll<HTMLElement>('[data-pick-relic]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const rId = btn.dataset.pickRelic as RelicDef['id'];
@@ -1561,6 +1703,17 @@ class StarforgeApp {
       this.battleModal = null;
       this.renderBattleOverlays();
       this.engine?.setPaused(false);
+    });
+
+    slot.querySelector('#btn-revive-ad')?.addEventListener('click', async () => {
+      const res = await monetizationBridge.showRewardedAd('in_run_revive', this.save.noAdsOwned || this.save.vipActive);
+      if (!res.rewarded) {
+        this.showToast('Watch the full video to revive!');
+        return;
+      }
+      this.battleModal = null;
+      this.renderBattleOverlays();
+      this.engine?.revivePlayer();
     });
 
     slot.querySelector('#btn-revive-token')?.addEventListener('click', () => {
@@ -2303,7 +2456,7 @@ class StarforgeApp {
       });
     });
 
-    // Vault & Codex
+    // Vault, Store & Codex
     this.root.querySelector('#btn-free-daily-gift')?.addEventListener('click', () => {
       if (this.save.freeGiftClaimedToday) return;
       this.save.freeGiftClaimedToday = true;
@@ -2312,6 +2465,112 @@ class StarforgeApp {
       saveGame(this.save);
       audio.playPurchaseSuccess();
       this.showToast('Daily Supply Grant: +1,500 Gold & +50 Shards!');
+      this.render();
+    });
+
+    this.root.querySelector('#btn-vip-daily-claim')?.addEventListener('click', () => {
+      const res = claimVipDailyShards(this.save);
+      if (res.ok) {
+        audio.playPurchaseSuccess();
+        this.showToast(`VIP Daily Allowance: +${res.amount} Star Shards!`);
+        this.render();
+      }
+    });
+
+    this.root.querySelector('#btn-ad-free-gems')?.addEventListener('click', async () => {
+      if (this.save.adGemsUsedToday >= ADMOB_CONFIG.dailyAdGemsLimit) return;
+      const res = await monetizationBridge.showRewardedAd('store_free_gems', this.save.noAdsOwned || this.save.vipActive);
+      if (!res.rewarded) {
+        this.showToast('Watch the full video to claim Shards');
+        return;
+      }
+      this.save.adGemsUsedToday += 1;
+      this.save.gems += ADMOB_CONFIG.dailyAdGemsAmount;
+      saveGame(this.save);
+      audio.playPurchaseSuccess();
+      this.showToast(`+${ADMOB_CONFIG.dailyAdGemsAmount} Star Shards claimed!`);
+      this.render();
+    });
+
+    this.root.querySelector('#btn-ad-free-key')?.addEventListener('click', async () => {
+      if (this.save.adKeysUsedToday >= ADMOB_CONFIG.dailyAdKeysLimit) return;
+      const res = await monetizationBridge.showRewardedAd('store_free_key', this.save.noAdsOwned || this.save.vipActive);
+      if (!res.rewarded) {
+        this.showToast('Watch the full video to claim Cyber Key');
+        return;
+      }
+      this.save.adKeysUsedToday += 1;
+      this.save.cyberKeys += 1;
+      saveGame(this.save);
+      audio.playPurchaseSuccess();
+      this.showToast('+1 Cyber Key claimed!');
+      this.render();
+    });
+
+    this.root.querySelectorAll<HTMLElement>('[data-claim-prem-mastery]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const tier = Number(b.dataset.claimPremMastery);
+        if (!this.save.seasonPassOwned || this.save.passPremiumClaimedTiers.includes(tier)) return;
+        const mt = MASTERY_TIERS.find((x) => x.tier === tier);
+        if (!mt || this.save.passXp < mt.xpRequired) return;
+        this.save.passPremiumClaimedTiers.push(tier);
+        const shards = mt.isMilestone ? 200 : 75;
+        this.save.gems += shards;
+        if (mt.isMilestone) this.save.cyberKeys += 1;
+        saveGame(this.save);
+        audio.playPurchaseSuccess();
+        this.showToast(`Pass Tier ${tier}: +${shards} Shards${mt.isMilestone ? ' + 1 Cyber Key' : ''}!`);
+        this.render();
+      });
+    });
+
+    this.root.querySelectorAll<HTMLElement>('[data-buy-sku]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const sku = b.dataset.buySku;
+        if (!sku) return;
+        b.setAttribute('disabled', 'true');
+        const res = await monetizationBridge.purchaseSku(sku);
+        if (res.purchased) {
+          const grant = applyPurchasedSku(this.save, sku);
+          audio.playPurchaseSuccess();
+          this.showToast(`${res.isSandbox ? '[Test] ' : ''}${grant.summary}`);
+          this.render();
+        } else {
+          b.removeAttribute('disabled');
+          if (!res.cancelled) {
+            this.showToast(res.error || 'Purchase could not be completed');
+          }
+        }
+      });
+    });
+
+    this.root.querySelector('#btn-restore-purchases')?.addEventListener('click', async () => {
+      const owned = await monetizationBridge.restorePurchases();
+      let restored = 0;
+      for (const sku of owned) {
+        if (!this.save.purchasedSkus.includes(sku)) {
+          applyPurchasedSku(this.save, sku);
+          restored += 1;
+        }
+      }
+      this.showToast(restored > 0 ? `Restored ${restored} purchase(s)!` : 'All purchases are up to date');
+      if (restored > 0) this.render();
+    });
+
+    this.root.querySelector('#btn-double-run-rewards')?.addEventListener('click', async () => {
+      if (this.modal?.kind !== 'run_summary' || this.modal.doubled) return;
+      const res = await monetizationBridge.showRewardedAd('post_run_double', this.save.noAdsOwned || this.save.vipActive);
+      if (!res.rewarded) {
+        this.showToast('Watch the full video to double rewards');
+        return;
+      }
+      const s = this.modal.summary;
+      this.save.coins += s.coinsEarned;
+      this.save.gems += s.gemsEarned;
+      saveGame(this.save);
+      this.modal = { kind: 'run_summary', summary: s, doubled: true };
+      audio.playPurchaseSuccess();
+      this.showToast(`2× BONUS: +${this.fmtNum(s.coinsEarned)} Gold & +${s.gemsEarned} Shards!`);
       this.render();
     });
 
