@@ -9,7 +9,7 @@ import {
   WheelSliceDef,
   getTodayDateKey,
 } from '../data/gameCatalog';
-import { SEVEN_DAY_LOGIN_REWARDS, SHOP_SKUS } from '../config/monetization';
+import { MONTHLY_SPEND_CAP_EUR, SEVEN_DAY_LOGIN_REWARDS, SHOP_SKUS } from '../config/monetization';
 import {
   AscensionTier,
   CombatStats,
@@ -149,6 +149,8 @@ export function createDefaultSave(): PlayerSave {
     adKeysUsedToday: 0,
     lastInterstitialAt: 0,
     sevenDayClaimedDays: [],
+    monthlySpendMonth: day.slice(0, 7),
+    monthlySpendEur: 0,
 
     localLeaderboard: {
       endless: [],
@@ -885,7 +887,30 @@ export function applyRunOutcome(save: PlayerSave, summary: RunSummary): void {
   saveGame(save);
 }
 
-export function applyPurchasedSku(save: PlayerSave, skuId: string): { ok: boolean; summary: string } {
+export function ensureMonthlySpendState(save: PlayerSave): void {
+  const curMonth = getTodayDateKey().slice(0, 7);
+  if (save.monthlySpendMonth !== curMonth) {
+    save.monthlySpendMonth = curMonth;
+    save.monthlySpendEur = 0;
+  }
+}
+
+export function getMonthlySpendRemaining(save: PlayerSave): number {
+  ensureMonthlySpendState(save);
+  return Math.max(0, Math.round((MONTHLY_SPEND_CAP_EUR - (save.monthlySpendEur || 0)) * 100) / 100);
+}
+
+export function canSpendWithinMonthlyCap(save: PlayerSave, priceEur: number): boolean {
+  ensureMonthlySpendState(save);
+  return Math.round(((save.monthlySpendEur || 0) + priceEur) * 100) <= MONTHLY_SPEND_CAP_EUR * 100;
+}
+
+export function applyPurchasedSku(
+  save: PlayerSave,
+  skuId: string,
+  isRestore = false
+): { ok: boolean; summary: string } {
+  ensureMonthlySpendState(save);
   const def = SHOP_SKUS.find((s) => s.sku === skuId);
   if (!def) return { ok: false, summary: 'Unknown product' };
   if (def.oneTimeOnly && save.purchasedSkus.includes(skuId)) {
@@ -898,6 +923,10 @@ export function applyPurchasedSku(save: PlayerSave, skuId: string): { ok: boolea
     }
     saveGame(save);
     return { ok: true, summary: `${def.title} restored!` };
+  }
+
+  if (!isRestore) {
+    save.monthlySpendEur = Math.round(((save.monthlySpendEur || 0) + def.priceEur) * 100) / 100;
   }
 
   const parts: string[] = [];

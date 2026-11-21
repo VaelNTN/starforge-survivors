@@ -283,6 +283,8 @@ export interface PlayerSave {
   adKeysUsedToday: number;
   lastInterstitialAt: number;
   sevenDayClaimedDays: number[];
+  monthlySpendMonth: string;
+  monthlySpendEur: number;
 
   localLeaderboard: Record<LeaderboardMode, LeaderboardEntry[]>;
 }

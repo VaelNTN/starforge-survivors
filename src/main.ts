@@ -24,7 +24,7 @@ import {
   getTodayDateKey,
 } from './data/gameCatalog';
 import { DraftOption, HudSnapshot, SurvivorEngine } from './engine/survivorEngine';
-import { ADMOB_CONFIG, SHOP_SKUS } from './config/monetization';
+import { ADMOB_CONFIG, MONTHLY_SPEND_CAP_EUR, SHOP_SKUS } from './config/monetization';
 import { audio } from './services/audio';
 import { monetizationBridge } from './services/billing';
 import { fetchOnlineLeaderboard, submitOnlineScore } from './services/leaderboard';
@@ -32,6 +32,7 @@ import {
   applyPurchasedSku,
   applyRunOutcome,
   autoMergeAllGear,
+  canSpendWithinMonthlyCap,
   claimVipDailyShards,
   clearActiveRun,
   collectPatrolEarnings,
@@ -42,6 +43,7 @@ import {
   getGearPower,
   getGearStats,
   getGearUpgradeCost,
+  getMonthlySpendRemaining,
   getSalvageYield,
   loadActiveRun,
   loadSave,
@@ -157,7 +159,7 @@ class StarforgeApp {
       let changed = false;
       for (const sku of owned) {
         if (!this.save.purchasedSkus.includes(sku)) {
-          applyPurchasedSku(this.save, sku);
+          applyPurchasedSku(this.save, sku, true);
           changed = true;
         }
       }
@@ -2528,10 +2530,18 @@ class StarforgeApp {
       b.addEventListener('click', async () => {
         const sku = b.dataset.buySku;
         if (!sku) return;
+        const skuDef = SHOP_SKUS.find((s) => s.sku === sku);
+        if (!skuDef) return;
+        if (!canSpendWithinMonthlyCap(this.save, skuDef.priceEur)) {
+          const rem = getMonthlySpendRemaining(this.save);
+          this.showToast(`Fair-Play Cap (€${MONTHLY_SPEND_CAP_EUR}/mo): only €${rem.toFixed(2)} remaining this month`);
+          this.render();
+          return;
+        }
         b.setAttribute('disabled', 'true');
         const res = await monetizationBridge.purchaseSku(sku);
         if (res.purchased) {
-          const grant = applyPurchasedSku(this.save, sku);
+          const grant = applyPurchasedSku(this.save, sku, false);
           audio.playPurchaseSuccess();
           this.showToast(`${res.isSandbox ? '[Test] ' : ''}${grant.summary}`);
           this.render();
@@ -2549,7 +2559,7 @@ class StarforgeApp {
       let restored = 0;
       for (const sku of owned) {
         if (!this.save.purchasedSkus.includes(sku)) {
-          applyPurchasedSku(this.save, sku);
+          applyPurchasedSku(this.save, sku, true);
           restored += 1;
         }
       }

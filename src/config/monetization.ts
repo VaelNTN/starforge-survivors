@@ -20,6 +20,13 @@ export const ADMOB_CONFIG = {
 } as const;
 
 /**
+ * HARD ETHICAL MONTHLY SPENDING CAP
+ * No player can ever spend more than €250.00 per calendar month.
+ * Resets automatically on the 1st of each month.
+ */
+export const MONTHLY_SPEND_CAP_EUR = 250;
+
+/**
  * HIGH-CONVERTING GOOGLE PLAY BILLING PRODUCT CATALOG
  * Every `sku` matches a Product ID in Google Play Console:
  * Monetize -> Products -> In-app products / Subscriptions.
@@ -121,13 +128,47 @@ export const SHOP_SKUS: ShopSkuDef[] = [
     isConsumable: true,
     category: 'gems',
     title: 'Nova Treasury',
-    subtitle: '5,000 Star Shards (+1,500 First-Time Bonus)',
+    subtitle: '5,000 Star Shards • 6× Cyber Keys • 75,000 Gold (+1,500 First-Time Bonus)',
     badge: 'MEGA VALUE',
     fallbackPrice: '€19.99',
     priceEur: 19.99,
     gems: 5000,
+    coins: 75000,
+    keys: 6,
     firstTimeBonusGems: 1500,
     highlightColor: '#f43f5e',
+  },
+  {
+    sku: 'starforge_gems_ultra',
+    productType: 'inapp',
+    isConsumable: true,
+    category: 'gems',
+    title: 'Galactic Sovereign Vault',
+    subtitle: '16,000 Star Shards • 20× Cyber Keys • 250,000 Gold (+4,000 First-Time Bonus)',
+    badge: 'SOVEREIGN',
+    fallbackPrice: '€49.99',
+    priceEur: 49.99,
+    gems: 16000,
+    coins: 250000,
+    keys: 20,
+    firstTimeBonusGems: 4000,
+    highlightColor: '#a855f7',
+  },
+  {
+    sku: 'starforge_gems_emperor',
+    productType: 'inapp',
+    isConsumable: true,
+    category: 'gems',
+    title: "Emperor's Starforge Treasury",
+    subtitle: '40,000 Star Shards • 50× Cyber Keys • 750,000 Gold (+10,000 First-Time Bonus)',
+    badge: 'SUPREME PATRON',
+    fallbackPrice: '€99.99',
+    priceEur: 99.99,
+    gems: 40000,
+    coins: 750000,
+    keys: 50,
+    firstTimeBonusGems: 10000,
+    highlightColor: '#fbbf24',
   },
 ];
 
