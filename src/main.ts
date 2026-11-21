@@ -25,8 +25,30 @@ import {
 } from './data/gameCatalog';
 import { DraftOption, HudSnapshot, SurvivorEngine } from './engine/survivorEngine';
 import { ADMOB_CONFIG, MONTHLY_SPEND_CAP_EUR, SHOP_SKUS } from './config/monetization';
+import {
+  BOOTCAMP_GRAND_POINTS,
+  BOOTCAMP_MISSIONS,
+  BOSS_VAULT_MAX_SHARDS,
+  COMBAT_DRONES,
+  GALAXIES,
+  GEAR_SETS,
+  GROWTH_FUND_TIERS,
+  HERO_SKINS,
+  TECH_CHIPS,
+  TOTAL_CAMPAIGN_CHAPTERS,
+  buildTowerChapterDef,
+  getActiveWeeklyEvent,
+  getChapterMilestones,
+  getTowerFloorDef,
+} from './data/aaaSystems';
 import { audio } from './services/audio';
 import { monetizationBridge } from './services/billing';
+import {
+  decodeBackupString,
+  downloadCloudSave,
+  encodeBackupString,
+  uploadCloudSave,
+} from './services/cloudSave';
 import { fetchOnlineLeaderboard, submitOnlineScore } from './services/leaderboard';
 import {
   applyPurchasedSku,
@@ -39,6 +61,7 @@ import {
   computePatrolEarnings,
   computePlayerStats,
   createDefaultSave,
+  createGearItem,
   findMergeCandidates,
   getGearPower,
   getGearStats,
@@ -83,13 +106,16 @@ import {
 } from './ui/svgAssets';
 
 type MainTab = 'battle' | 'heroes' | 'forge' | 'mastery' | 'vault';
-type ForgeSubTab = 'gear' | 'crates' | 'talents';
+type ForgeSubTab = 'gear' | 'drones' | 'chips' | 'crates' | 'talents';
 type MasterySubTab = 'track' | 'quests' | 'achievements';
 type VaultSubTab = 'store' | 'evos' | 'relics' | 'bosses';
 
 type ModalState =
   | null
   | { kind: 'chapters' }
+  | { kind: 'tower' }
+  | { kind: 'bootcamp' }
+  | { kind: 'weekly_event' }
   | { kind: 'daily_streak' }
   | {
       kind: 'leaderboard';
@@ -114,6 +140,7 @@ class StarforgeApp {
   private masterySub: MasterySubTab = 'track';
   private vaultSub: VaultSubTab = 'store';
   private selectedChapterId = 1;
+  private selectedGalaxy = 1;
   private modal: ModalState = null;
   private boosters: ActiveRunBoosters = { extraWeapon: false, overdriveAtk: false, doubleLuck: false };
   private gearFilter: 'all' | GearSlot = 'all';
@@ -143,7 +170,8 @@ class StarforgeApp {
   constructor(root: HTMLElement) {
     this.root = root;
     this.save = loadSave();
-    this.selectedChapterId = Math.min(6, Math.max(1, this.save.highestChapterUnlocked));
+    this.selectedChapterId = Math.min(TOTAL_CAMPAIGN_CHAPTERS, Math.max(1, this.save.highestChapterUnlocked));
+    this.selectedGalaxy = Math.min(5, Math.max(1, Math.ceil(this.selectedChapterId / 10)));
     audio.configure(this.save.soundEnabled, this.save.musicEnabled);
 
     const pendingSnap = loadActiveRun();
@@ -797,6 +825,24 @@ class StarforgeApp {
               </div>
             </button>
 
+            <button class="quick-tile" id="btn-open-tower" style="border-color:#a855f7;">
+              <div class="tile-head" style="color:#c084fc;">🗼 Spire Tower</div>
+              <div style="font-size:12px;font-weight:800;">Floor ${Math.min(100, this.save.highestTowerFloor + 1)}/100</div>
+              <div style="font-size:10px;color:var(--cyan);font-weight:800;">45s Gauntlet</div>
+            </button>
+
+            <button class="quick-tile" id="btn-open-bootcamp" style="border-color:${!this.save.bootcampGrandClaimed ? '#fbbf24' : 'var(--border)'};">
+              <div class="tile-head" style="color:#fbbf24;">🎯 7-Day Ops</div>
+              <div style="font-size:12px;font-weight:800;">${this.save.bootcampGrandClaimed ? 'Completed!' : 'Free Mythic!'}</div>
+              <div style="font-size:10px;color:#34d399;font-weight:800;">${this.save.bootcampClaimedIds.length}/${BOOTCAMP_MISSIONS.length} Tasks</div>
+            </button>
+
+            <button class="quick-tile" id="btn-open-weekly" style="border-color:${getActiveWeeklyEvent().accent};">
+              <div class="tile-head" style="color:${getActiveWeeklyEvent().accent};">🌟 Live Event</div>
+              <div style="font-size:12px;font-weight:800;">${this.save.weeklyEventTokens} Tokens</div>
+              <div style="font-size:10px;color:var(--muted);font-weight:800;">${getActiveWeeklyEvent().name}</div>
+            </button>
+
             <button class="quick-tile" data-go-tab="mastery">
               <div class="tile-head" style="color:#fbbf24;">${uiIconSvg('crown', 13, '#fbbf24')} Mastery</div>
               <div style="font-size:12px;font-weight:800;">Tier ${Math.min(30, Math.floor(this.save.passXp / 100))}/30</div>
@@ -856,6 +902,22 @@ class StarforgeApp {
                 `
                 }
               </div>
+              ${
+                unlocked
+                  ? `<div style="display:flex;gap:5px;flex-wrap:wrap;padding-top:4px;border-top:1px solid rgba(148,163,184,0.14);">
+                      <button class="btn ${!this.save.equippedSkins[h.id] ? 'btn-primary' : 'btn-ghost'}" style="padding:3px 7px;font-size:10px;" data-equip-skin="${h.id}:default">Default</button>
+                      ${HERO_SKINS.filter((sk) => sk.heroId === h.id)
+                        .map((sk) => {
+                          const hasSk = this.save.unlockedSkins.includes(sk.id);
+                          const isEq = this.save.equippedSkins[h.id] === sk.id;
+                          return hasSk
+                            ? `<button class="btn ${isEq ? 'btn-amber' : 'btn-ghost'}" style="padding:3px 7px;font-size:10px;border-color:${sk.primaryColor};" data-equip-skin="${h.id}:${sk.id}">${isEq ? '★ ' : ''}${sk.name}</button>`
+                            : `<button class="btn btn-ghost" style="padding:3px 7px;font-size:10px;border-color:${sk.primaryColor}88;color:${sk.primaryColor};" data-buy-skin="${sk.id}" ${this.save.gems < sk.costGems ? 'disabled' : ''}>🎨 ${sk.name} (${sk.costGems})</button>`;
+                        })
+                        .join('')}
+                    </div>`
+                  : ''
+              }
             </div>
           `;
         }).join('')}
@@ -865,22 +927,105 @@ class StarforgeApp {
 
   private renderForgeTab(): string {
     return `
-      <div class="subtabs">
+      <div class="subtabs" style="flex-wrap:wrap;">
         <button class="subtab ${this.forgeSub === 'gear' ? 'active' : ''}" data-forge-sub="gear">${uiIconSvg('sword', 13)} Gear</button>
+        <button class="subtab ${this.forgeSub === 'drones' ? 'active' : ''}" data-forge-sub="drones">🤖 Drones</button>
+        <button class="subtab ${this.forgeSub === 'chips' ? 'active' : ''}" data-forge-sub="chips">💠 Chips (${this.save.equippedTechChips.length}/3)</button>
         <button class="subtab ${this.forgeSub === 'crates' ? 'active' : ''}" data-forge-sub="crates">${uiIconSvg('crate', 13)} Chests (${this.save.basicKeys + this.save.cyberKeys})</button>
         <button class="subtab ${this.forgeSub === 'talents' ? 'active' : ''}" data-forge-sub="talents">${uiIconSvg('bolt', 13)} Talents</button>
       </div>
       ${
         this.forgeSub === 'gear'
           ? this.renderForgeGear()
-          : this.forgeSub === 'crates'
-            ? this.renderForgeCrates()
-            : this.renderForgeTalents()
+          : this.forgeSub === 'drones'
+            ? this.renderForgeDrones()
+            : this.forgeSub === 'chips'
+              ? this.renderForgeChips()
+              : this.forgeSub === 'crates'
+                ? this.renderForgeCrates()
+                : this.renderForgeTalents()
       }
     `;
   }
 
+  private renderForgeDrones(): string {
+    return `
+      <div class="card glow-cyan" style="padding:10px 12px;">
+        <strong style="font-size:14px;">🤖 Orbital Combat Drones (Cyber-Pets)</strong>
+        <div style="font-size:11px;color:var(--muted);">Flies beside your hero in battle, fires unique attacks & grants permanent ATK/HP!</div>
+      </div>
+      <div class="heroes-grid">
+        ${COMBAT_DRONES.map((d) => {
+          const lv = this.save.ownedDrones[d.id] || 0;
+          const owned = lv > 0;
+          const equipped = this.save.equippedDrone === d.id;
+          const upgCost = Math.round(1200 * Math.pow(1.45, Math.max(0, lv - 1)));
+          return `
+            <div class="card" style="border-color:${equipped ? d.color : 'var(--border)'};gap:7px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <strong style="color:${d.color};font-size:14px;">${d.name} ${owned ? `Lv.${lv}` : ''}</strong>
+                <span class="badge-tag" style="background:${d.color}25;color:${d.color};">${d.role}</span>
+              </div>
+              <div style="font-size:11px;color:var(--muted);">${d.desc}</div>
+              <div style="font-size:11px;color:var(--cyan);font-weight:800;">
+                +${d.atkBonusPerLv * Math.max(1, lv)} ATK • +${d.hpBonusPerLv * Math.max(1, lv)} HP
+              </div>
+              <div style="display:flex;gap:6px;">
+                ${
+                  !owned
+                    ? `<button class="btn btn-amber" data-unlock-drone="${d.id}" style="flex:1;" ${this.save.gems < d.unlockCostGems ? 'disabled' : ''}>Unlock (${d.unlockCostGems} Shards)</button>`
+                    : `
+                      <button class="btn ${equipped ? 'btn-ghost' : 'btn-primary'}" data-equip-drone="${d.id}" style="flex:1;" ${equipped ? 'disabled' : ''}>${equipped ? 'Equipped' : 'Deploy'}</button>
+                      <button class="btn btn-green" data-upgrade-drone="${d.id}" style="flex:1;" ${this.save.coins < upgCost ? 'disabled' : ''}>Upgrade (${this.fmtNum(upgCost)}g)</button>
+                    `
+                }
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  private renderForgeChips(): string {
+    return `
+      <div class="card glow-purple" style="padding:10px 12px;">
+        <strong style="font-size:14px;">💠 Weapon Tech Chips (${this.save.equippedTechChips.length}/3 Active)</strong>
+        <div style="font-size:11px;color:var(--muted);">Each equipped Tech Chip supercharges your combat ATK (+12%) & Projectile Power (+10%)!</div>
+      </div>
+      <div class="heroes-grid">
+        ${TECH_CHIPS.map((c) => {
+          const owned = this.save.ownedTechChips.includes(c.id);
+          const equipped = this.save.equippedTechChips.includes(c.id);
+          return `
+            <div class="card" style="border-color:${equipped ? c.color : 'var(--border)'};gap:6px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <strong style="color:${c.color};font-size:13px;">${c.name}</strong>
+                <span class="badge-tag" style="background:${equipped ? 'var(--green)' : 'rgba(148,163,184,0.2)'};color:#fff;">${equipped ? 'ACTIVE' : owned ? 'OWNED' : 'LOCKED'}</span>
+              </div>
+              <div style="font-size:11px;color:var(--muted);">${c.desc}</div>
+              ${
+                !owned
+                  ? `<button class="btn btn-amber" data-unlock-chip="${c.id}" ${this.save.gems < c.costGems ? 'disabled' : ''}>Forge Chip (${c.costGems} Shards)</button>`
+                  : `<button class="btn ${equipped ? 'btn-rose' : 'btn-primary'}" data-toggle-chip="${c.id}">${equipped ? 'Unequip' : 'Equip Chip'}</button>`
+              }
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
   private renderForgeGear(): string {
+    const equippedTemplates = new Set(
+      (['weapon', 'armor', 'helmet', 'boots', 'ring', 'core'] as const)
+        .map((sl) => this.save.inventory.find((g) => g.uid === this.save.equipped[sl])?.templateId)
+        .filter((x): x is string => Boolean(x))
+    );
+    const activeSetBadges = GEAR_SETS.map((gs) => {
+      const cnt = gs.templateIds.filter((tid) => equippedTemplates.has(tid)).length;
+      return `<span class="badge-tag" style="background:${cnt >= 2 ? gs.color + '30' : 'rgba(148,163,184,0.14)'};color:${cnt >= 2 ? gs.color : 'var(--muted)'};border:1px solid ${cnt >= 2 ? gs.color : 'transparent'};">${gs.name.split(' ')[0]} ${cnt}/6</span>`;
+    }).join('');
     const slots = (['weapon', 'armor', 'helmet', 'boots', 'ring', 'core'] as const).map((sl) => {
       const uid = this.save.equipped[sl];
       const item = uid ? this.save.inventory.find((g) => g.uid === uid) : null;
@@ -914,6 +1059,7 @@ class StarforgeApp {
               ${uiIconSvg('blueprint', 14)} ${this.save.blueprints} Blueprints
             </span>
           </div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;">${activeSetBadges}</div>
           <div class="equip-grid">${slots.join('')}</div>
         </div>
 
@@ -1228,6 +1374,43 @@ class StarforgeApp {
               </div>
             </div>
 
+            <div class="card glow-purple" style="gap:7px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">
+                <div>
+                  <strong style="font-size:13px;color:#14b8a6;">📈 Starforge Growth Fund (18,000 Shards)</strong>
+                  <div style="font-size:11px;color:var(--muted);">Account Lv.${this.save.accountLevel} — ${this.save.growthFundOwned ? 'UNLOCKED! Claim Shards below:' : 'Unlock 18,000 Shards across Levels 3 → 40!'}</div>
+                </div>
+                ${
+                  !this.save.growthFundOwned
+                    ? `<button class="btn btn-amber" data-buy-sku="starforge_growth_fund" style="padding:5px 10px;font-size:11px;">Unlock ${this.esc(monetizationBridge.getDisplayPrice('starforge_growth_fund', '€9.99'))}</button>`
+                    : `<span class="badge-tag" style="background:rgba(20,184,166,0.25);color:#5eead4;">ACTIVE</span>`
+                }
+              </div>
+              <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                ${GROWTH_FUND_TIERS.map((gt) => {
+                  const reached = this.save.accountLevel >= gt.level;
+                  const claimed = this.save.growthFundClaimedLevels.includes(gt.level);
+                  const canClaim = this.save.growthFundOwned && reached && !claimed;
+                  return `<button class="btn ${canClaim ? 'btn-green' : 'btn-ghost'}" style="padding:4px 7px;font-size:10px;" data-claim-growth="${gt.level}" ${!canClaim ? 'disabled' : ''}>
+                    Lv.${gt.level}: ${claimed ? '✓' : `+${gt.gems}`}
+                  </button>`;
+                }).join('')}
+              </div>
+            </div>
+
+            <div class="card" style="border-color:rgba(249,115,22,0.55);gap:6px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <div>
+                  <strong style="font-size:13px;color:#fb923c;">🐷 Boss Piggy Vault (${this.save.bossVaultShards} / ${BOSS_VAULT_MAX_SHARDS} Shards)</strong>
+                  <div style="font-size:11px;color:var(--muted);">Fills +75 Shards every time you defeat a Sector Boss!</div>
+                </div>
+                <button class="btn btn-amber" data-buy-sku="starforge_boss_vault" style="padding:6px 10px;font-size:11px;">
+                  Crack (${this.esc(monetizationBridge.getDisplayPrice('starforge_boss_vault', '€2.99'))})
+                </button>
+              </div>
+              <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, Math.round((this.save.bossVaultShards / BOSS_VAULT_MAX_SHARDS) * 100))}%;background:#fb923c;"></div></div>
+            </div>
+
             <div class="heroes-grid">
               ${SHOP_SKUS.map((sku) => {
                 const owned = Boolean(sku.oneTimeOnly && this.save.purchasedSkus.includes(sku.sku));
@@ -1540,23 +1723,28 @@ class StarforgeApp {
         </div>
       `;
     } else if (m?.kind === 'chest') {
+      const tierCount = m.rewards.length;
+      const tierLabel = tierCount >= 3 ? '★ 5× MEGA JACKPOT ROULETTE ★' : tierCount === 2 ? '⚡ 3× SUPER JACKPOT CHEST ⚡' : '✨ ELITE JACKPOT CHEST ✨';
+      const tierBorder = tierCount >= 3 ? '#f43f5e' : '#fbbf24';
       html += `
         <div class="modal-backdrop">
-          <div class="modal-card" style="border-color:#fbbf24;text-align:center;">
-            <div>${uiIconSvg('chest', 32, '#fbbf24')}</div>
-            <div style="font-size:18px;font-weight:900;color:#fbbf24;">ELITE JACKPOT CHEST</div>
-            <div style="font-size:13px;color:var(--green);font-weight:800;">+${m.coins} Bonus Gold</div>
+          <div class="modal-card" style="border-color:${tierBorder};box-shadow:0 0 36px ${tierBorder}55;text-align:center;">
+            <div style="display:inline-block;padding:4px 12px;border-radius:999px;background:${tierBorder}28;border:1px solid ${tierBorder};color:${tierBorder};font-size:11px;font-weight:900;letter-spacing:0.7px;">
+              ${tierLabel}
+            </div>
+            <div style="margin:4px 0;">${uiIconSvg('chest', 40, '#fbbf24')}</div>
+            <div style="font-size:15px;color:var(--green);font-weight:900;">+${this.fmtNum(m.coins)} Bonus Gold</div>
             ${m.rewards
               .map(
-                (r) => `
-              <div class="card" style="text-align:left;background:var(--bg-card-2);">
-                <strong style="color:${r.isEvo ? '#fbbf24' : 'var(--cyan)'};">${this.esc(r.name)} (Lv.${r.nextLv})</strong>
+                (r, idx) => `
+              <div class="card" style="text-align:left;background:var(--bg-card-2);border-color:${r.isEvo ? '#fbbf24' : 'rgba(56,189,248,0.45)'};">
+                <strong style="color:${r.isEvo ? '#fbbf24' : 'var(--cyan)'};">#${idx + 1} • ${this.esc(r.name)} (Lv.${r.nextLv})</strong>
                 <small style="color:var(--muted);">${this.esc(r.subtitle)}</small>
               </div>
             `
               )
               .join('')}
-            <button class="btn btn-amber" id="btn-close-chest">KEEP FIGHTING</button>
+            <button class="btn btn-amber" id="btn-close-chest">CLAIM & KEEP FIGHTING</button>
           </div>
         </div>
       `;
@@ -1792,33 +1980,220 @@ class StarforgeApp {
     }
 
     if (m.kind === 'chapters') {
+      const g = GALAXIES[this.selectedGalaxy - 1] || GALAXIES[0];
+      const startId = (g.id - 1) * 10 + 1;
+      const endId = startId + 9;
+      const galaxyChapters = CHAPTERS.filter((c) => c.mode === 'chapter' && c.id >= startId && c.id <= endId);
+      const specialModes = CHAPTERS.filter((c) => c.mode !== 'chapter');
+      const curChId = this.selectedChapterId <= TOTAL_CAMPAIGN_CHAPTERS ? this.selectedChapterId : 1;
+      const curBestSec = this.save.chapterBestSec[curChId] || 0;
+      const curCleared = this.save.clearedChapters.includes(curChId);
+      const curMilestones = getChapterMilestones(curChId);
+
       return `
         <div class="modal-backdrop" id="modal-bg">
-          <div class="modal-card">
+          <div class="modal-card" style="max-height:86vh;overflow-y:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <strong style="font-size:16px;">Select Arena / Chapter</strong>
+              <strong style="font-size:16px;">Galactic Campaign (50 Sectors)</strong>
               <button class="icon-btn" id="modal-close" aria-label="Close">${uiIconSvg('close', 16)}</button>
             </div>
-            ${CHAPTERS.map((c) => {
-              const unlocked = c.mode !== 'chapter' || c.id <= this.save.highestChapterUnlocked;
-              const cleared = this.save.clearedChapters.includes(c.id);
-              const extraMeta =
-                c.mode === 'boss_rush'
-                  ? `• Clears: ${this.save.bossRushClears}${this.save.bestBossRushSec > 0 ? ` (Best ${this.fmtTime(this.save.bestBossRushSec)})` : ''}`
-                  : c.mode === 'endless' && this.save.bestEndlessSec > 0
-                    ? `• Best: ${this.fmtTime(this.save.bestEndlessSec)}`
-                    : '';
+
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">
+              ${GALAXIES.map(
+                (gx) => `
+                  <button class="btn ${gx.id === this.selectedGalaxy ? 'btn-primary' : 'btn-ghost'}" data-pick-galaxy="${gx.id}" style="flex:1;min-width:52px;padding:5px 4px;font-size:11px;${gx.id === this.selectedGalaxy ? `border-color:${gx.accent};` : ''}">
+                    G${gx.roman}
+                  </button>
+                `
+              ).join('')}
+            </div>
+
+            <div class="card" style="padding:8px 10px;border-color:${g.accent}66;gap:6px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <strong style="font-size:12px;color:${g.accent};">Galaxy ${g.roman}: ${g.name}</strong>
+                <small style="color:var(--muted);">Ch.${curChId} Milestone Chests</small>
+              </div>
+              <div style="display:flex;gap:5px;">
+                ${curMilestones
+                  .map((ms) => {
+                    const mk = `${curChId}:${ms.key}`;
+                    const claimed = this.save.chapterMilestonesClaimed.includes(mk);
+                    const reached =
+                      ms.key === 'clear'
+                        ? curCleared
+                        : ms.key === '4m'
+                          ? curBestSec >= 180 || curCleared
+                          : curBestSec >= 90 || curCleared;
+                    const ready = reached && !claimed;
+                    return `<button class="btn ${ready ? 'btn-green' : 'btn-ghost'}" data-claim-ch-ms="${mk}" style="flex:1;padding:5px 4px;font-size:10px;" ${!ready ? 'disabled' : ''}>
+                      ${claimed ? '✓ ' : '🎁 '}${ms.label}<br><small>+${ms.gems}💎${ms.cyberKeys ? ` +${ms.cyberKeys}🔑` : ''}</small>
+                    </button>`;
+                  })
+                  .join('')}
+              </div>
+            </div>
+
+            ${galaxyChapters
+              .map((c) => {
+                const unlocked = c.id <= this.save.highestChapterUnlocked;
+                const cleared = this.save.clearedChapters.includes(c.id);
+                return `
+                  <button class="card" data-pick-chapter="${c.id}" style="text-align:left;cursor:pointer;padding:8px 10px;border-color:${c.id === this.selectedChapterId ? c.accentColor : 'var(--border)'};opacity:${unlocked ? 1 : 0.45};" ${!unlocked ? 'disabled' : ''}>
+                    <div style="display:flex;justify-content:space-between;width:100%;">
+                      <strong style="color:${c.accentColor};font-size:13px;">${c.name} ${cleared ? '✓' : ''}</strong>
+                      <small style="color:var(--muted);">Pwr ${c.recommendedPower}</small>
+                    </div>
+                    <div style="font-size:10px;color:#fbbf24;">Boss: ${c.bossName} • ${this.fmtNum(c.rewardCoins)}g & ${c.rewardGems} Shards</div>
+                  </button>
+                `;
+              })
+              .join('')}
+
+            <div style="font-size:11px;font-weight:900;color:var(--cyan);margin-top:4px;">SPECIAL MODES</div>
+            ${specialModes
+              .map((c) => {
+                const extraMeta =
+                  c.mode === 'boss_rush'
+                    ? `• Clears: ${this.save.bossRushClears}`
+                    : c.mode === 'endless' && this.save.bestEndlessSec > 0
+                      ? `• Best: ${this.fmtTime(this.save.bestEndlessSec)}`
+                      : '';
+                return `
+                  <button class="card" data-pick-chapter="${c.id}" style="text-align:left;cursor:pointer;padding:8px 10px;border-color:${c.id === this.selectedChapterId ? c.accentColor : 'var(--border)'};">
+                    <div style="display:flex;justify-content:space-between;width:100%;">
+                      <strong style="color:${c.accentColor};">${c.name}</strong>
+                      <small style="color:var(--muted);">Power ${c.recommendedPower}</small>
+                    </div>
+                    <div style="font-size:10px;color:#fbbf24;">${c.subtitle} ${extraMeta}</div>
+                  </button>
+                `;
+              })
+              .join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    if (m.kind === 'tower') {
+      const nextFloor = Math.min(100, this.save.highestTowerFloor + 1);
+      const tf = getTowerFloorDef(nextFloor);
+      const milestoneFloors = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100];
+      return `
+        <div class="modal-backdrop" id="modal-bg">
+          <div class="modal-card" style="border-color:#a855f7;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="font-size:16px;color:#c084fc;">🗼 Starforge Spire (100 Floors)</strong>
+              <button class="icon-btn" id="modal-close" aria-label="Close">${uiIconSvg('close', 16)}</button>
+            </div>
+            <div class="card glow-purple" style="text-align:center;gap:6px;">
+              <div style="font-size:12px;color:var(--muted);">Highest Cleared: <b>Floor ${this.save.highestTowerFloor}/100</b></div>
+              <div style="font-size:18px;font-weight:900;color:#fbbf24;">${tf.title}</div>
+              <div style="font-size:12px;color:var(--cyan);font-weight:800;">Modifier: ${tf.modifierLabel}</div>
+              <div style="font-size:11px;color:var(--muted);">Duration: ${tf.durationSec}s • Reward: +${this.fmtNum(tf.rewardCoins)} Gold & +${tf.rewardGems} Shards</div>
+              <button class="btn btn-primary" id="btn-launch-tower" style="margin-top:4px;">⚔️ CHALLENGE FLOOR ${nextFloor}</button>
+            </div>
+            <div style="font-size:11px;font-weight:900;color:#fbbf24;">TOWER MILESTONE REWARDS</div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap;">
+              ${milestoneFloors
+                .map((fl) => {
+                  const reached = this.save.highestTowerFloor >= fl;
+                  const claimed = this.save.towerMilestonesClaimed.includes(fl);
+                  const ready = reached && !claimed;
+                  return `<button class="btn ${ready ? 'btn-green' : 'btn-ghost'}" data-claim-tower-ms="${fl}" style="padding:5px 8px;font-size:10px;" ${!ready ? 'disabled' : ''}>
+                    F${fl}: ${claimed ? '✓' : `+${fl * 15}💎`}
+                  </button>`;
+                })
+                .join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    if (m.kind === 'bootcamp') {
+      const earnedPts = BOOTCAMP_MISSIONS.reduce(
+        (acc, bm) => acc + (this.save.bootcampClaimedIds.includes(bm.id) ? bm.points : 0),
+        0
+      );
+      const grandReady = earnedPts >= BOOTCAMP_GRAND_POINTS && !this.save.bootcampGrandClaimed;
+      const getVal = (metric: (typeof BOOTCAMP_MISSIONS)[number]['metric']): number => {
+        if (metric === 'totalRuns') return this.save.totalRuns;
+        if (metric === 'totalKills') return this.save.totalKills;
+        if (metric === 'totalBossesKilled') return this.save.totalBossesKilled;
+        if (metric === 'clearedChapters') return this.save.clearedChapters.length;
+        if (metric === 'highestTowerFloor') return this.save.highestTowerFloor;
+        if (metric === 'accountLevel') return this.save.accountLevel;
+        return this.save.discoveredEvos.length;
+      };
+      return `
+        <div class="modal-backdrop" id="modal-bg">
+          <div class="modal-card" style="border-color:#fbbf24;max-height:86vh;overflow-y:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="font-size:16px;color:#fbbf24;">🎯 Operation: Starforge (7-Day Ops)</strong>
+              <button class="icon-btn" id="modal-close" aria-label="Close">${uiIconSvg('close', 16)}</button>
+            </div>
+            <div class="card glow-amber" style="gap:6px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <strong style="font-size:13px;">GRAND PRIZE: Mythic Solaris Blade + 1,000 Shards</strong>
+                <span style="font-size:11px;font-weight:900;color:#fbbf24;">${Math.min(BOOTCAMP_GRAND_POINTS, earnedPts)}/${BOOTCAMP_GRAND_POINTS} pts</span>
+              </div>
+              <div class="progress-track"><div class="progress-fill" style="width:${Math.min(100, Math.round((earnedPts / BOOTCAMP_GRAND_POINTS) * 100))}%;background:#fbbf24;"></div></div>
+              <button class="btn ${grandReady ? 'btn-green' : 'btn-ghost'}" id="btn-claim-bootcamp-grand" ${!grandReady ? 'disabled' : ''}>
+                ${this.save.bootcampGrandClaimed ? '✓ Mythic Solaris Blade Claimed!' : grandReady ? '★ CLAIM MYTHIC SOLARIS BLADE + 1,000 SHARDS!' : `Reach ${BOOTCAMP_GRAND_POINTS} Ops Points`}
+              </button>
+            </div>
+            ${BOOTCAMP_MISSIONS.map((bm) => {
+              const cur = Math.min(bm.target, getVal(bm.metric));
+              const claimed = this.save.bootcampClaimedIds.includes(bm.id);
+              const ready = cur >= bm.target && !claimed;
               return `
-                <button class="card" data-pick-chapter="${c.id}" style="text-align:left;cursor:pointer;border-color:${c.id === this.selectedChapterId ? c.accentColor : 'var(--border)'};opacity:${unlocked ? 1 : 0.45};" ${!unlocked ? 'disabled' : ''}>
-                  <div style="display:flex;justify-content:space-between;width:100%;">
-                    <strong style="color:${c.accentColor};">${c.name} ${cleared ? '✓' : ''}</strong>
-                    <small style="color:var(--muted);">Power ${c.recommendedPower}</small>
+                <div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;">
+                  <div>
+                    <strong style="font-size:12px;">Day ${bm.day} • ${bm.title} (${cur}/${bm.target})</strong>
+                    <div style="font-size:10px;color:var(--cyan);">+${this.fmtNum(bm.rewardCoins)}g • +${bm.rewardGems} Shards • +${bm.points} pts</div>
                   </div>
-                  <div style="font-size:11px;color:var(--muted);">${c.subtitle}</div>
-                  <div style="font-size:10px;color:#fbbf24;">Boss: ${c.bossName} • ${this.fmtNum(c.rewardCoins)} Gold & ${c.rewardGems} Shards ${extraMeta}</div>
-                </button>
+                  <button class="btn ${ready ? 'btn-green' : 'btn-ghost'}" data-claim-bootcamp="${bm.id}" style="padding:5px 10px;font-size:11px;" ${!ready ? 'disabled' : ''}>
+                    ${claimed ? '✓' : ready ? 'Claim' : `${cur}/${bm.target}`}
+                  </button>
+                </div>
               `;
             }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    if (m.kind === 'weekly_event') {
+      const ev = getActiveWeeklyEvent();
+      return `
+        <div class="modal-backdrop" id="modal-bg">
+          <div class="modal-card" style="border-color:${ev.accent};">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="font-size:16px;color:${ev.accent};">🌟 ${ev.name} (${ev.weekKey})</strong>
+              <button class="icon-btn" id="modal-close" aria-label="Close">${uiIconSvg('close', 16)}</button>
+            </div>
+            <div style="font-size:12px;color:var(--muted);">${ev.subtitle}</div>
+            <div class="card" style="background:var(--bg-card-2);text-align:center;font-weight:900;color:${ev.accent};">
+              Your Balance: ${this.save.weeklyEventTokens} ${ev.tokenName}
+            </div>
+            ${ev.shopItems
+              .map((it) => {
+                const used = this.save.weeklyShopClaimed[it.id] || 0;
+                const left = Math.max(0, it.limit - used);
+                const canBuy = left > 0 && this.save.weeklyEventTokens >= it.cost;
+                return `
+                  <div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;padding:8px 10px;">
+                    <div>
+                      <strong style="font-size:13px;">${it.title}</strong>
+                      <div style="font-size:10px;color:var(--muted);">Remaining: ${left}/${it.limit}</div>
+                    </div>
+                    <button class="btn ${canBuy ? 'btn-amber' : 'btn-ghost'}" data-buy-weekly="${it.id}" style="padding:6px 10px;font-size:11px;" ${!canBuy ? 'disabled' : ''}>
+                      ${left === 0 ? 'Sold Out' : `${it.cost} Tokens`}
+                    </button>
+                  </div>
+                `;
+              })
+              .join('')}
           </div>
         </div>
       `;
@@ -2132,6 +2507,18 @@ class StarforgeApp {
             <label style="font-size:12px;font-weight:800;">Commander Name
               <input id="in-player-name" value="${this.esc(this.save.playerName)}" style="width:100%;margin-top:4px;padding:8px;border-radius:10px;border:1px solid var(--border);background:var(--bg-card-2);color:#fff;font-weight:700;">
             </label>
+            <div class="card" style="background:var(--bg-card-2);gap:6px;padding:9px 10px;">
+              <strong style="font-size:12px;color:var(--cyan);">☁️ Cloud Save Sync (Never Lose Purchases!)</strong>
+              <div style="font-size:11px;color:var(--muted);">Your Sync Code: <b style="color:#fbbf24;letter-spacing:0.6px;">${this.esc(this.save.cloudSyncCode)}</b></div>
+              <div style="display:flex;gap:6px;">
+                <button class="btn btn-primary" id="btn-cloud-upload" style="flex:1;padding:6px 8px;font-size:11px;">☁️ Upload Save</button>
+                <button class="btn btn-ghost" id="btn-copy-backup" style="flex:1;padding:6px 8px;font-size:11px;">📋 Copy Code</button>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <input id="in-cloud-code" placeholder="Enter SF-XXXX-XXXX or Backup" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:#0f172a;color:#fff;font-size:11px;">
+                <button class="btn btn-green" id="btn-cloud-restore" style="padding:6px 10px;font-size:11px;">Restore</button>
+              </div>
+            </div>
             <label class="setting-toggle-row">
               <span>Sound Effects</span>
               <input type="checkbox" id="chk-sound" ${this.save.soundEnabled ? 'checked' : ''}>
@@ -2782,9 +3169,298 @@ class StarforgeApp {
       this.save = createDefaultSave();
       saveGame(this.save);
       this.selectedChapterId = 1;
+      this.selectedGalaxy = 1;
       this.modal = null;
       this.showToast('Progress reset');
       this.render();
+    });
+
+    // ---- AAA SYSTEMS EVENT HANDLERS ----
+    this.root.querySelector('#btn-open-tower')?.addEventListener('click', () => {
+      audio.playTap();
+      this.modal = { kind: 'tower' };
+      this.render();
+    });
+    this.root.querySelector('#btn-open-bootcamp')?.addEventListener('click', () => {
+      audio.playTap();
+      this.modal = { kind: 'bootcamp' };
+      this.render();
+    });
+    this.root.querySelector('#btn-open-weekly')?.addEventListener('click', () => {
+      audio.playTap();
+      this.modal = { kind: 'weekly_event' };
+      this.render();
+    });
+
+    // 50-Chapter Galaxy Tabs & 150 Milestone Chests
+    this.root.querySelectorAll<HTMLElement>('[data-pick-galaxy]').forEach((b) => {
+      b.addEventListener('click', () => {
+        audio.playTap();
+        this.selectedGalaxy = Number(b.dataset.pickGalaxy) || 1;
+        this.render();
+      });
+    });
+    this.root.querySelectorAll<HTMLElement>('[data-claim-ch-ms]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const mk = b.dataset.claimChMs || '';
+        if (!mk || this.save.chapterMilestonesClaimed.includes(mk)) return;
+        const [chStr, key] = mk.split(':');
+        const chId = Number(chStr);
+        const ms = getChapterMilestones(chId).find((x) => x.key === key);
+        if (!ms) return;
+        this.save.chapterMilestonesClaimed.push(mk);
+        this.save.coins += ms.coins;
+        this.save.gems += ms.gems;
+        this.save.cyberKeys += ms.cyberKeys;
+        saveGame(this.save);
+        audio.playPurchaseSuccess();
+        this.showToast(`Ch.${chId} Chest: +${this.fmtNum(ms.coins)}g & +${ms.gems} Shards!`);
+        this.render();
+      });
+    });
+
+    // 100-Floor Spire Trial Tower
+    this.root.querySelector('#btn-launch-tower')?.addEventListener('click', () => {
+      const nextFloor = Math.min(100, this.save.highestTowerFloor + 1);
+      const towerCh = buildTowerChapterDef(nextFloor);
+      this.modal = null;
+      audio.unlock();
+      this.launchBattle({
+        chapter: towerCh,
+        heroId: this.save.selectedHero,
+        weaponStyle: this.save.selectedWeaponStyle,
+        boosters: { extraWeapon: false, overdriveAtk: false, doubleLuck: false },
+        ascension: 1,
+        dailyConfig: null,
+      });
+    });
+    this.root.querySelectorAll<HTMLElement>('[data-claim-tower-ms]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const fl = Number(b.dataset.claimTowerMs);
+        if (this.save.highestTowerFloor < fl || this.save.towerMilestonesClaimed.includes(fl)) return;
+        this.save.towerMilestonesClaimed.push(fl);
+        const reward = fl * 15;
+        this.save.gems += reward;
+        this.save.cyberKeys += 1;
+        saveGame(this.save);
+        audio.playPurchaseSuccess();
+        this.showToast(`Tower Floor ${fl} Milestone: +${reward} Shards & +1 Cyber Key!`);
+        this.render();
+      });
+    });
+
+    // 7-Day Operation: Starforge Bootcamp
+    this.root.querySelectorAll<HTMLElement>('[data-claim-bootcamp]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.claimBootcamp || '';
+        const bm = BOOTCAMP_MISSIONS.find((x) => x.id === id);
+        if (!bm || this.save.bootcampClaimedIds.includes(id)) return;
+        this.save.bootcampClaimedIds.push(id);
+        this.save.coins += bm.rewardCoins;
+        this.save.gems += bm.rewardGems;
+        saveGame(this.save);
+        audio.playPurchaseSuccess();
+        this.showToast(`Ops Complete: +${bm.rewardGems} Shards & +${bm.points} Ops Pts!`);
+        this.render();
+      });
+    });
+    this.root.querySelector('#btn-claim-bootcamp-grand')?.addEventListener('click', () => {
+      if (this.save.bootcampGrandClaimed) return;
+      this.save.bootcampGrandClaimed = true;
+      this.save.gems += 1000;
+      const mythicBlade = createGearItem('wp_katana', 'mythic', 1);
+      this.save.inventory.unshift(mythicBlade);
+      this.save.equipped.weapon = mythicBlade.uid;
+      saveGame(this.save);
+      audio.playPurchaseSuccess();
+      this.showToast('★ MYTHIC SOLARIS BLADE + 1,000 SHARDS CLAIMED!');
+      this.render();
+    });
+
+    // Weekly Live-Ops Event Shop
+    this.root.querySelectorAll<HTMLElement>('[data-buy-weekly]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.buyWeekly || '';
+        const ev = getActiveWeeklyEvent();
+        const it = ev.shopItems.find((x) => x.id === id);
+        if (!it) return;
+        const used = this.save.weeklyShopClaimed[id] || 0;
+        if (used >= it.limit || this.save.weeklyEventTokens < it.cost) return;
+        this.save.weeklyEventTokens -= it.cost;
+        this.save.weeklyShopClaimed[id] = used + 1;
+        if (it.rewardType === 'coins') this.save.coins += it.amount;
+        else if (it.rewardType === 'gems') this.save.gems += it.amount;
+        else if (it.rewardType === 'cyberKeys') this.save.cyberKeys += it.amount;
+        else this.save.blueprints += it.amount;
+        saveGame(this.save);
+        audio.playPurchaseSuccess();
+        this.showToast(`Event Shop: Claimed ${it.title}!`);
+        this.render();
+      });
+    });
+
+    // Combat Drones (Unlock / Deploy / Upgrade)
+    this.root.querySelectorAll<HTMLElement>('[data-unlock-drone]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.unlockDrone || '';
+        const d = COMBAT_DRONES.find((x) => x.id === id);
+        if (!d || this.save.ownedDrones[id] || this.save.gems < d.unlockCostGems) return;
+        this.save.gems -= d.unlockCostGems;
+        this.save.ownedDrones[id] = 1;
+        this.save.equippedDrone = id;
+        saveGame(this.save);
+        audio.playPurchaseSuccess();
+        this.showToast(`🤖 ${d.name} unlocked & deployed!`);
+        this.render();
+      });
+    });
+    this.root.querySelectorAll<HTMLElement>('[data-equip-drone]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.equipDrone || '';
+        if (!this.save.ownedDrones[id]) return;
+        this.save.equippedDrone = id;
+        saveGame(this.save);
+        audio.playTap();
+        this.showToast('Combat Drone deployed!');
+        this.render();
+      });
+    });
+    this.root.querySelectorAll<HTMLElement>('[data-upgrade-drone]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.upgradeDrone || '';
+        const lv = this.save.ownedDrones[id] || 0;
+        if (lv <= 0) return;
+        const cost = Math.round(1200 * Math.pow(1.45, Math.max(0, lv - 1)));
+        if (this.save.coins < cost) return;
+        this.save.coins -= cost;
+        this.save.ownedDrones[id] = lv + 1;
+        saveGame(this.save);
+        audio.playPurchaseSuccess();
+        this.showToast(`Drone upgraded to Lv.${lv + 1}!`);
+        this.render();
+      });
+    });
+
+    // Weapon Tech Chips (Unlock / Toggle 3 Active Slots)
+    this.root.querySelectorAll<HTMLElement>('[data-unlock-chip]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.unlockChip || '';
+        const c = TECH_CHIPS.find((x) => x.id === id);
+        if (!c || this.save.ownedTechChips.includes(id) || this.save.gems < c.costGems) return;
+        this.save.gems -= c.costGems;
+        this.save.ownedTechChips.push(id);
+        if (this.save.equippedTechChips.length < 3) this.save.equippedTechChips.push(id);
+        saveGame(this.save);
+        audio.playPurchaseSuccess();
+        this.showToast(`💠 Forged ${c.name}!`);
+        this.render();
+      });
+    });
+    this.root.querySelectorAll<HTMLElement>('[data-toggle-chip]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.toggleChip || '';
+        if (!this.save.ownedTechChips.includes(id)) return;
+        if (this.save.equippedTechChips.includes(id)) {
+          this.save.equippedTechChips = this.save.equippedTechChips.filter((x) => x !== id);
+        } else {
+          if (this.save.equippedTechChips.length >= 3) {
+            this.showToast('Max 3 Tech Chips active — unequip one first');
+            return;
+          }
+          this.save.equippedTechChips.push(id);
+        }
+        saveGame(this.save);
+        audio.playTap();
+        this.render();
+      });
+    });
+
+    // Cosmetic Hero Skins
+    this.root.querySelectorAll<HTMLElement>('[data-buy-skin]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.buySkin || '';
+        const sk = HERO_SKINS.find((x) => x.id === id);
+        if (!sk || this.save.unlockedSkins.includes(id) || this.save.gems < sk.costGems) return;
+        this.save.gems -= sk.costGems;
+        this.save.unlockedSkins.push(id);
+        this.save.equippedSkins[sk.heroId] = id;
+        saveGame(this.save);
+        audio.playPurchaseSuccess();
+        this.showToast(`🎨 Skin unlocked: ${sk.name}!`);
+        this.render();
+      });
+    });
+    this.root.querySelectorAll<HTMLElement>('[data-equip-skin]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const [heroId, skinId] = (b.dataset.equipSkin || '').split(':') as [HeroId, string];
+        if (skinId === 'default') delete this.save.equippedSkins[heroId];
+        else this.save.equippedSkins[heroId] = skinId;
+        saveGame(this.save);
+        audio.playTap();
+        this.render();
+      });
+    });
+
+    // Growth Fund Milestone Claims
+    this.root.querySelectorAll<HTMLElement>('[data-claim-growth]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const lv = Number(b.dataset.claimGrowth);
+        const gt = GROWTH_FUND_TIERS.find((x) => x.level === lv);
+        if (!gt || !this.save.growthFundOwned || this.save.accountLevel < lv || this.save.growthFundClaimedLevels.includes(lv)) return;
+        this.save.growthFundClaimedLevels.push(lv);
+        this.save.gems += gt.gems;
+        saveGame(this.save);
+        audio.playPurchaseSuccess();
+        this.showToast(`Growth Fund Lv.${lv}: +${gt.gems} Star Shards!`);
+        this.render();
+      });
+    });
+
+    // 1-Tap Cloud Save Sync & Backup Code
+    this.root.querySelector('#btn-cloud-upload')?.addEventListener('click', async () => {
+      this.showToast('Uploading to Starforge Cloud...');
+      const res = await uploadCloudSave(this.save.cloudSyncCode, this.save);
+      this.showToast(res.message);
+    });
+    this.root.querySelector('#btn-copy-backup')?.addEventListener('click', async () => {
+      const code = encodeBackupString(this.save);
+      try {
+        await navigator.clipboard.writeText(code);
+        this.showToast('Backup Code copied to clipboard!');
+      } catch {
+        this.showToast(`Sync Code: ${this.save.cloudSyncCode}`);
+      }
+    });
+    this.root.querySelector('#btn-cloud-restore')?.addEventListener('click', async () => {
+      const val = (this.root.querySelector<HTMLInputElement>('#in-cloud-code')?.value || '').trim();
+      if (!val) {
+        this.showToast('Enter your SF-XXXX-XXXX code or Backup string');
+        return;
+      }
+      if (val.length > 40) {
+        const decoded = decodeBackupString(val);
+        if (!decoded) {
+          this.showToast('Invalid Backup string');
+          return;
+        }
+        saveGame(decoded);
+        this.save = loadSave();
+        this.modal = null;
+        this.showToast(`Restored Commander ${this.save.playerName}!`);
+        this.render();
+        return;
+      }
+      this.showToast('Downloading from Starforge Cloud...');
+      const res = await downloadCloudSave(val);
+      if (res.ok && res.save) {
+        saveGame(res.save);
+        this.save = loadSave();
+        this.modal = null;
+        this.showToast(res.message);
+        this.render();
+      } else {
+        this.showToast(res.message);
+      }
     });
   }
 }

@@ -286,6 +286,28 @@ export interface PlayerSave {
   monthlySpendMonth: string;
   monthlySpendEur: number;
 
+  // AAA Systems State (50 Chapters, Drones, Tech Chips, Tower, Bootcamp, Live-Ops, Skins, Cloud Save)
+  chapterBestSec: Record<number, number>;
+  chapterMilestonesClaimed: string[];
+  ownedDrones: Record<string, number>;
+  equippedDrone: string | null;
+  ownedTechChips: string[];
+  equippedTechChips: string[];
+  highestTowerFloor: number;
+  towerMilestonesClaimed: number[];
+  bootcampClaimedIds: string[];
+  bootcampGrandClaimed: boolean;
+  weeklyEventKey: string;
+  weeklyEventTokens: number;
+  weeklyShopClaimed: Record<string, number>;
+  unlockedSkins: string[];
+  equippedSkins: Partial<Record<HeroId, string>>;
+  growthFundOwned: boolean;
+  growthFundClaimedLevels: number[];
+  bossVaultShards: number;
+  cloudSyncCode: string;
+  ftueCompleted: boolean;
+
   localLeaderboard: Record<LeaderboardMode, LeaderboardEntry[]>;
 }
 
@@ -307,6 +329,8 @@ export interface ShopSkuDef {
   grantsPass?: boolean;
   grantsVip?: boolean;
   grantsStarterGear?: boolean;
+  grantsGrowthFund?: boolean;
+  breaksBossVault?: boolean;
   oneTimeOnly?: boolean;
   highlightColor: string;
 }

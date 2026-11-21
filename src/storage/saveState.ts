@@ -11,6 +11,13 @@ import {
 } from '../data/gameCatalog';
 import { MONTHLY_SPEND_CAP_EUR, SEVEN_DAY_LOGIN_REWARDS, SHOP_SKUS } from '../config/monetization';
 import {
+  BOSS_VAULT_MAX_SHARDS,
+  COMBAT_DRONES,
+  GEAR_SETS,
+  getIsoWeekKey,
+} from '../data/aaaSystems';
+import { generateSyncCode } from '../services/cloudSave';
+import {
   AscensionTier,
   CombatStats,
   GearItem,
@@ -152,6 +159,27 @@ export function createDefaultSave(): PlayerSave {
     monthlySpendMonth: day.slice(0, 7),
     monthlySpendEur: 0,
 
+    chapterBestSec: {},
+    chapterMilestonesClaimed: [],
+    ownedDrones: { volt_wasp: 1 },
+    equippedDrone: 'volt_wasp',
+    ownedTechChips: [],
+    equippedTechChips: [],
+    highestTowerFloor: 0,
+    towerMilestonesClaimed: [],
+    bootcampClaimedIds: [],
+    bootcampGrandClaimed: false,
+    weeklyEventKey: getIsoWeekKey(),
+    weeklyEventTokens: 20,
+    weeklyShopClaimed: {},
+    unlockedSkins: [],
+    equippedSkins: {},
+    growthFundOwned: false,
+    growthFundClaimedLevels: [],
+    bossVaultShards: 150,
+    cloudSyncCode: generateSyncCode(),
+    ftueCompleted: false,
+
     localLeaderboard: {
       endless: [],
       boss_rush: [],
@@ -273,6 +301,34 @@ export function loadSave(): PlayerSave {
       adGemsUsedToday: Math.floor(safeNum(parsed.adGemsUsedToday, 0, 0)),
       adKeysUsedToday: Math.floor(safeNum(parsed.adKeysUsedToday, 0, 0)),
       lastInterstitialAt: safeNum(parsed.lastInterstitialAt, 0, 0),
+      monthlySpendMonth:
+        typeof parsed.monthlySpendMonth === 'string' && parsed.monthlySpendMonth.length === 7
+          ? parsed.monthlySpendMonth
+          : getTodayDateKey().slice(0, 7),
+      monthlySpendEur: Math.round(safeNum(parsed.monthlySpendEur, 0, 0) * 100) / 100,
+      chapterBestSec: parsed.chapterBestSec && typeof parsed.chapterBestSec === 'object' ? parsed.chapterBestSec : {},
+      chapterMilestonesClaimed: Array.isArray(parsed.chapterMilestonesClaimed) ? parsed.chapterMilestonesClaimed : [],
+      ownedDrones:
+        parsed.ownedDrones && typeof parsed.ownedDrones === 'object' && Object.keys(parsed.ownedDrones).length > 0
+          ? parsed.ownedDrones
+          : { volt_wasp: 1 },
+      equippedDrone: typeof parsed.equippedDrone === 'string' ? parsed.equippedDrone : 'volt_wasp',
+      ownedTechChips: Array.isArray(parsed.ownedTechChips) ? parsed.ownedTechChips : [],
+      equippedTechChips: Array.isArray(parsed.equippedTechChips) ? parsed.equippedTechChips.slice(0, 3) : [],
+      highestTowerFloor: Math.floor(safeNum(parsed.highestTowerFloor, 0, 0)),
+      towerMilestonesClaimed: Array.isArray(parsed.towerMilestonesClaimed) ? parsed.towerMilestonesClaimed : [],
+      bootcampClaimedIds: Array.isArray(parsed.bootcampClaimedIds) ? parsed.bootcampClaimedIds : [],
+      bootcampGrandClaimed: Boolean(parsed.bootcampGrandClaimed),
+      weeklyEventKey: typeof parsed.weeklyEventKey === 'string' ? parsed.weeklyEventKey : getIsoWeekKey(),
+      weeklyEventTokens: Math.floor(safeNum(parsed.weeklyEventTokens, 20, 0)),
+      weeklyShopClaimed: parsed.weeklyShopClaimed && typeof parsed.weeklyShopClaimed === 'object' ? parsed.weeklyShopClaimed : {},
+      unlockedSkins: Array.isArray(parsed.unlockedSkins) ? parsed.unlockedSkins : [],
+      equippedSkins: parsed.equippedSkins && typeof parsed.equippedSkins === 'object' ? parsed.equippedSkins : {},
+      growthFundOwned: Boolean(parsed.growthFundOwned),
+      growthFundClaimedLevels: Array.isArray(parsed.growthFundClaimedLevels) ? parsed.growthFundClaimedLevels : [],
+      bossVaultShards: Math.min(BOSS_VAULT_MAX_SHARDS, Math.floor(safeNum(parsed.bossVaultShards, 150, 0))),
+      cloudSyncCode: typeof parsed.cloudSyncCode === 'string' && parsed.cloudSyncCode.length >= 6 ? parsed.cloudSyncCode : generateSyncCode(),
+      ftueCompleted: Boolean(parsed.ftueCompleted),
       inventory: inv,
       localLeaderboard: {
         endless: Array.isArray(localLb.endless) ? localLb.endless : [],
@@ -470,6 +526,60 @@ export function computePlayerStats(save: PlayerSave): CombatStats {
     goldMult += 0.25;
     xpMult += 0.25;
     pickupRadius *= 1.35;
+  }
+
+  // Active Combat Drone stat bonuses
+  if (save.equippedDrone) {
+    const droneDef = COMBAT_DRONES.find((d) => d.id === save.equippedDrone);
+    const droneLv = save.ownedDrones[save.equippedDrone] || 0;
+    if (droneDef && droneLv > 0) {
+      atk += droneDef.atkBonusPerLv * droneLv;
+      maxHp += droneDef.hpBonusPerLv * droneLv;
+      if (droneDef.id === 'scrap_hound') pickupRadius *= 1.3;
+    }
+  }
+
+  // S-Grade Armor Set Bonuses (2-pc / 4-pc / 6-pc)
+  const equippedTemplates = new Set<string>();
+  for (const sl of slots) {
+    const uid = save.equipped[sl];
+    if (!uid) continue;
+    const item = save.inventory.find((g) => g.uid === uid);
+    if (item) equippedTemplates.add(item.templateId);
+  }
+  for (const gs of GEAR_SETS) {
+    const count = gs.templateIds.filter((tid) => equippedTemplates.has(tid)).length;
+    if (gs.id === 'solaris') {
+      if (count >= 2) atk *= 1.15;
+      if (count >= 4) {
+        critMult += 0.25;
+        critChance += 0.06;
+      }
+      if (count >= 6) {
+        atk *= 1.3;
+        goldMult += 0.25;
+      }
+    } else if (gs.id === 'voidwalker') {
+      if (count >= 2) {
+        dodgeChance += 0.1;
+        moveSpeed *= 1.08;
+      }
+      if (count >= 4) cooldownReduction += 0.15;
+      if (count >= 6) {
+        projPowerMult += 0.25;
+        xpMult += 0.2;
+      }
+    } else if (gs.id === 'titan') {
+      if (count >= 2) maxHp *= 1.2;
+      if (count >= 4) {
+        armor += 8;
+        hpRegenPerSec += 4;
+      }
+      if (count >= 6) {
+        maxHp *= 1.35;
+        atk *= 1.2;
+      }
+    }
   }
 
   const finalMaxHp = Math.round(maxHp);
@@ -965,6 +1075,16 @@ export function applyPurchasedSku(
     save.vipActive = true;
     save.noAdsOwned = true;
     parts.push('VIP Club Active');
+  }
+  if (def.grantsGrowthFund) {
+    save.growthFundOwned = true;
+    parts.push('Growth Fund Unlocked (18,000 Shards Track!)');
+  }
+  if (def.breaksBossVault) {
+    const vaultAmt = Math.max(300, save.bossVaultShards);
+    save.gems += vaultAmt;
+    save.bossVaultShards = 150;
+    parts.push(`Boss Vault Cracked: +${vaultAmt} Shards!`);
   }
 
   // First-Purchase Bonus: Any first real purchase grants +300 Bonus Shards + 2 Cyber Keys!

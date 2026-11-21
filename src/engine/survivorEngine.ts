@@ -439,6 +439,18 @@ export class SurvivorEngine {
   private height = 780;
   private dpr = 1;
 
+  // AAA Systems: Companion Drone, Tech Chips, Hero Skin Aura, FTUE & Special Pickup Timer
+  private droneId: string | null = null;
+  private droneLevel = 1;
+  private droneX = 0;
+  private droneY = 0;
+  private droneAngle = 0;
+  private droneCd = 1.5;
+  private skinPrimary: string | null = null;
+  private skinAura: string | null = null;
+  private showFtueHint = false;
+  private nextSpecialDropSec = 55;
+
   constructor(
     canvas: HTMLCanvasElement,
     chapter: ChapterDef,
@@ -450,7 +462,15 @@ export class SurvivorEngine {
     boosters: ActiveRunBoosters,
     ascension: AscensionTier,
     dailyConfig: DailyRunConfig | null,
-    cb: EngineCallbacks
+    cb: EngineCallbacks,
+    aaaOpts?: {
+      droneId?: string | null;
+      droneLevel?: number;
+      techChips?: string[];
+      skinPrimary?: string;
+      skinAura?: string;
+      showFtueHint?: boolean;
+    }
   ) {
     this.canvas = canvas;
     const context = canvas.getContext('2d');
@@ -466,8 +486,19 @@ export class SurvivorEngine {
     this.hero = HEROES.find((h) => h.id === heroId) || HEROES[0];
     this.weaponStyle = weaponStyle;
 
-    // Apply boosters & daily run stat modifiers
+    this.droneId = aaaOpts?.droneId || null;
+    this.droneLevel = Math.max(1, aaaOpts?.droneLevel || 1);
+    this.skinPrimary = aaaOpts?.skinPrimary || null;
+    this.skinAura = aaaOpts?.skinAura || null;
+    this.showFtueHint = Boolean(aaaOpts?.showFtueHint);
+
+    // Apply boosters, Tech Chips & daily run stat modifiers
     let modStats: CombatStats = { ...stats };
+    const chipCount = aaaOpts?.techChips?.length || 0;
+    if (chipCount > 0) {
+      modStats.atk = Math.round(modStats.atk * (1 + chipCount * 0.12));
+      modStats.projPowerMult = Number((modStats.projPowerMult + chipCount * 0.1).toFixed(2));
+    }
     if (boosters.overdriveAtk) {
       modStats.atk = Math.round(modStats.atk * 1.25);
     }
@@ -1525,6 +1556,15 @@ export class SurvivorEngine {
 
     // Fire weapons & deployed turrets & mines
     this.updateWeapons(dt);
+    this.updateCompanionDrone(dt);
+    if (this.elapsedSec >= this.nextSpecialDropSec) {
+      this.nextSpecialDropSec += 65;
+      const ang = this.rng() * Math.PI * 2;
+      const dist = 240 + this.rng() * 140;
+      const kind = this.rng() < 0.52 ? 'magnet' : 'bomb';
+      this.pickups.push({ kind, x: this.px + Math.cos(ang) * dist, y: this.py + Math.sin(ang) * dist, val: 1, magnetized: false });
+      this.cb.onWaveBanner(kind === 'magnet' ? 'SUPER-MAGNET DETECTED!' : 'EMP NUKE BOMB DROPPED!');
+    }
     this.updateDeployedTurrets(dt);
     this.updatePlasmaMines(dt);
     this.updateMeteors(dt);
@@ -3949,10 +3989,48 @@ export class SurvivorEngine {
       ctx.restore();
     }
 
+    // Draw Hero Skin Cosmetic Aura + Companion Combat Drone
+    if (this.skinAura) {
+      ctx.save();
+      ctx.strokeStyle = this.skinAura;
+      ctx.globalAlpha = 0.32 + 0.14 * Math.sin(this.elapsedSec * 5);
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(this.px, this.py, 26 + Math.sin(this.elapsedSec * 4) * 2.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    this.drawCompanionDrone(ctx);
+
     ctx.restore(); // End World Space
 
     // ---- SCREEN SPACE INDICATORS (clamped safely away from Top HUD & Bottom-Right buttons) ----
     this.drawOffscreenIndicators(ctx, camX, camY, w, h);
+
+    // FTUE First-Run Animated Joystick Hint (first 6 seconds until player touches)
+    if (this.showFtueHint && !this.touchActive && this.elapsedSec < 6) {
+      const cx = w * 0.5;
+      const cy = h * 0.72;
+      const ox = Math.cos(this.elapsedSec * 2.6) * 22;
+      const oy = Math.sin(this.elapsedSec * 2.6) * 14;
+      ctx.save();
+      ctx.fillStyle = 'rgba(15,23,42,0.68)';
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 40, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath();
+      ctx.arc(cx + ox, cy + oy, 14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('DRAG TO MOVE • AUTO-FIRE ACTIVE', cx, cy + 58);
+      ctx.restore();
+    }
 
     // Virtual Floating Joystick HUD
     if (this.touchActive) {
@@ -3965,7 +4043,7 @@ export class SurvivorEngine {
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = this.hero.accentColor;
+      ctx.fillStyle = this.skinPrimary || this.hero.accentColor;
       ctx.beginPath();
       ctx.arc(this.touchStartX + this.joyX * 44, this.touchStartY + this.joyY * 44, 20, 0, Math.PI * 2);
       ctx.fill();
@@ -3993,6 +4071,8 @@ export class SurvivorEngine {
     }
     for (const p of this.pickups) {
       if (p.kind === 'chest') markers.push({ x: p.x, y: p.y, color: '#fbbf24', label: 'CHEST' });
+      else if (p.kind === 'magnet') markers.push({ x: p.x, y: p.y, color: '#c084fc', label: 'MAGNET' });
+      else if (p.kind === 'bomb') markers.push({ x: p.x, y: p.y, color: '#38bdf8', label: 'EMP' });
     }
     if (this.objective) {
       markers.push({
@@ -4940,5 +5020,127 @@ export class SurvivorEngine {
       ctx.fillStyle = e.kind === 'boss' ? '#ef4444' : e.tier === 2 ? '#f43f5e' : '#f59e0b';
       ctx.fillRect(e.x - bw / 2, e.y + e.radius + 6, bw * frac, 4);
     }
+  }
+
+  private updateCompanionDrone(dt: number): void {
+    if (!this.droneId) return;
+    this.droneAngle += dt * (this.droneId === 'aegis_sentinel' ? 3.8 : 1.9);
+    const orbitR = this.droneId === 'aegis_sentinel' ? 44 : 52;
+    const targetX = this.px + Math.cos(this.droneAngle) * orbitR;
+    const targetY = this.py + Math.sin(this.droneAngle) * orbitR - 8;
+    this.droneX += (targetX - this.droneX) * Math.min(1, dt * 8);
+    this.droneY += (targetY - this.droneY) * Math.min(1, dt * 8);
+
+    // Aegis Sentinel continuously intercepts nearby enemy projectiles
+    if (this.droneId === 'aegis_sentinel') {
+      for (let i = this.projectiles.length - 1; i >= 0; i--) {
+        const p = this.projectiles[i];
+        if (!p.fromEnemy) continue;
+        if (Math.hypot(p.x - this.droneX, p.y - this.droneY) < 28) {
+          this.projectiles.splice(i, 1);
+          this.rings.push({ x: p.x, y: p.y, maxRadius: 30, color: '#a78bfa', life: 0.22, maxLife: 0.22 });
+        }
+      }
+    }
+
+    this.droneCd -= dt;
+    if (this.droneCd > 0) return;
+
+    const lvMult = 1 + (this.droneLevel - 1) * 0.14;
+    if (this.droneId === 'volt_wasp') {
+      this.droneCd = 2.2;
+      const nearby = this.enemies
+        .filter((e) => Math.hypot(e.x - this.droneX, e.y - this.droneY) < 260)
+        .slice(0, 3);
+      if (nearby.length > 0) {
+        const pts: { x: number; y: number }[] = [{ x: this.droneX, y: this.droneY }];
+        const dmg = this.stats.atk * 1.35 * lvMult;
+        for (const e of nearby) {
+          pts.push({ x: e.x, y: e.y });
+          this.damageEnemy(e, dmg, false, 'drone');
+        }
+        this.lightnings.push({ points: pts, color: '#38bdf8', life: 0.2, maxLife: 0.2 });
+      }
+    } else if (this.droneId === 'medi_orb') {
+      this.droneCd = 7.5;
+      const healAmt = Math.max(8, Math.round(this.stats.maxHp * 0.05 * lvMult));
+      this.hp = Math.min(this.stats.maxHp, this.hp + healAmt);
+      this.rings.push({ x: this.px, y: this.py, maxRadius: 72, color: '#34d399', life: 0.35, maxLife: 0.35 });
+    } else if (this.droneId === 'cryo_owl') {
+      this.droneCd = 3.5;
+      const dmg = this.stats.atk * 1.15 * lvMult;
+      this.rings.push({ x: this.droneX, y: this.droneY, maxRadius: 120, color: '#22d3ee', life: 0.35, maxLife: 0.35, isFrost: true });
+      for (const e of this.enemies) {
+        if (Math.hypot(e.x - this.droneX, e.y - this.droneY) < 125) {
+          e.slowTimer = Math.max(e.slowTimer, 2.2);
+          this.damageEnemy(e, dmg, false, 'drone');
+        }
+      }
+    } else if (this.droneId === 'scrap_hound') {
+      this.droneCd = 3.0;
+      for (const p of this.pickups) {
+        if ((p.kind === 'xp_s' || p.kind === 'xp_m' || p.kind === 'xp_l' || p.kind === 'coin') &&
+            Math.hypot(p.x - this.px, p.y - this.py) < 380) {
+          p.magnetized = true;
+        }
+      }
+      this.rings.push({ x: this.droneX, y: this.droneY, maxRadius: 56, color: '#fbbf24', life: 0.28, maxLife: 0.28 });
+    } else if (this.droneId === 'nova_turret') {
+      this.droneCd = 2.4;
+      let target: Enemy | null = null;
+      for (const e of this.enemies) {
+        if (Math.hypot(e.x - this.droneX, e.y - this.droneY) > 360) continue;
+        if (!target || e.maxHp > target.maxHp) target = e;
+      }
+      if (target) {
+        const dmg = this.stats.atk * 2.5 * lvMult;
+        this.lightnings.push({ points: [{ x: this.droneX, y: this.droneY }, { x: target.x, y: target.y }], color: '#fb923c', life: 0.18, maxLife: 0.18 });
+        this.rings.push({ x: target.x, y: target.y, maxRadius: 52, color: '#fb923c', life: 0.25, maxLife: 0.25 });
+        this.damageEnemy(target, dmg, true, 'drone');
+      }
+    } else {
+      this.droneCd = 2.0;
+    }
+  }
+
+  private drawCompanionDrone(ctx: CanvasRenderingContext2D): void {
+    if (!this.droneId) return;
+    const colorMap: Record<string, string> = {
+      volt_wasp: '#38bdf8',
+      medi_orb: '#34d399',
+      cryo_owl: '#22d3ee',
+      scrap_hound: '#fbbf24',
+      nova_turret: '#fb923c',
+      aegis_sentinel: '#a78bfa',
+    };
+    const col = colorMap[this.droneId] || '#38bdf8';
+    const bob = Math.sin(this.elapsedSec * 7) * 3;
+    ctx.save();
+    ctx.translate(this.droneX, this.droneY + bob);
+    // Outer glow
+    ctx.fillStyle = col;
+    ctx.globalAlpha = 0.24;
+    ctx.beginPath();
+    ctx.arc(0, 0, 15, 0, Math.PI * 2);
+    ctx.fill();
+    // Drone chassis
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#0f172a';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.lineTo(10, 0);
+    ctx.lineTo(0, 10);
+    ctx.lineTo(-10, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Core eye
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(0, 0, 3.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 }
